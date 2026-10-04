@@ -58,9 +58,18 @@ each is a named, failing-if-broken test in `tests/test_score.py`:
 | 400 → 6% | 24 | `test_band_24` |
 | 420 → 30% | 126 | `test_band_126` |
 
-Plus the same-league oracle (`test_pl_same_league_oracle_22335`: 30 items, +8% →
-`floor(sum·0.08) = 22335`) and the contract test
+Plus the **dated snapshot** (`test_pl_same_league_snapshot_2026_10_04`: on
+2026-10-04 FUT.GG reported `Same League: 30 items, +8% -> 23,045`; the test pins
+`floor(sum·0.08) == 23045` for `sum ∈ [288063, 288074]`) and the contract test
 (`test_contract_sums_item_list_itself`).
+
+> **Snapshot handling.** FUT.GG bonus breakdowns move with card scores. Values
+> like `23,045` (PL Same League, 2026-10-04) are **dated snapshots**, not
+> timeless product values. They are labelled by date in the test name/docstring
+> and are used only to pin the arithmetic contract. The stable assertions are the
+> tag **model** (per-tag floor, top-10 cut) and the property assertions — never a
+> market-dependent number. An earlier note of `22,335` was a stale snapshot and
+> has been replaced. Tracked as T-5 in `AUDIT.md`.
 
 The three F1-rev **micro-fixtures**, each asserted on title/tags **and** the
 explicit zero-assertion the plan requires:
@@ -242,8 +251,8 @@ test_band_5 (test_score.TestBonusUnitBands.test_band_5)
 floor(167*.03)=5 and floor(199*.03)=5. ... ok
 test_contract_sums_item_list_itself (test_score.TestBonusUnitBands.test_contract_sums_item_list_itself)
 bonus() receives a list and sums it -- three ways to reach 650 agree. ... ok
-test_pl_same_league_oracle_22335 (test_score.TestBonusUnitBands.test_pl_same_league_oracle_22335)
-Same League, 30 items, +8% -> floor(sum*.08)=22335 for sum in [279188,279199]. ... ok
+test_pl_same_league_snapshot_2026_10_04 (test_score.TestBonusUnitBands.test_pl_same_league_snapshot_2026_10_04)
+DATED SNAPSHOT (2026-10-04): Same League, 30 items, +8% -> 23,045. ... ok
 test_zero_pct_is_zero (test_score.TestBonusUnitBands.test_zero_pct_is_zero) ... ok
 test_midfield_control_24 (test_score.TestMidfieldFixtures.test_midfield_control_24) ... ok
 test_midfield_silver_25_not_30 (test_score.TestMidfieldFixtures.test_midfield_silver_25_not_30)

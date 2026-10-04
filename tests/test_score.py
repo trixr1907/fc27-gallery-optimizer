@@ -72,14 +72,19 @@ class TestBonusUnitBands(EngineTestCase):
         self.assertEqual(self.engine.call("bonus", [{"score": 400}], 0.03), 12)
         self.assertEqual(self.engine.call("bonus", [{"score": 433}], 0.03), 12)
 
-    def test_pl_same_league_oracle_22335(self):
-        """Same League, 30 items, +8% -> floor(sum*.08)=22335 for sum in [279188,279199].
+    def test_pl_same_league_snapshot_2026_10_04(self):
+        """DATED SNAPSHOT (2026-10-04): Same League, 30 items, +8% -> 23,045.
 
-        NOTE: this is a *dated snapshot* value (see plan). It is only used to pin
-        the arithmetic contract, never as a stable FUT.GG assertion.
+        FUT.GG reported `Same League: 30 items, +8% -> 23,045` on 2026-10-04.
+        The value moves with card scores, so it is NOT a timeless product value
+        and must never be asserted as a stable oracle. This test only pins the
+        arithmetic contract `floor(sum * 0.08) == value` for a sum range derived
+        from that one snapshot; the tag *model* (per-tag floor, top-10 cut) is
+        what stays stable. See AUDIT.md T-5.
         """
-        self.assertEqual(self.engine.call("bonus", [{"score": 279188}], 0.08), 22335)
-        self.assertEqual(self.engine.call("bonus", [{"score": 279199}], 0.08), 22335)
+        # floor(sum * .08) == 23045  <=>  sum in [23045/.08, 23046/.08) = [288063, 288075)
+        self.assertEqual(self.engine.call("bonus", [{"score": 288063}], 0.08), 23045)
+        self.assertEqual(self.engine.call("bonus", [{"score": 288074}], 0.08), 23045)
 
     def test_contract_sums_item_list_itself(self):
         """bonus() receives a list and sums it -- three ways to reach 650 agree."""

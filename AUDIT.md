@@ -10,6 +10,7 @@ proven by a fixture or the live site. Each entry has a status; do not treat an
 | T-2 | Slots cascade | When a set page states no slot count, slots are taken from the body text, then an index oracle (`{totw: 20}`), then default 15; recorded via `slotsEstimated` / `slotsSource`. | `verify` | `server.py` `parse_futgg`; `tests/test_parser.py::TestSlotsEligibility` |
 | T-3 | Score→Level | EA publishes no complete score-to-Gallery-Level table, so the app optimizes Gallery Score and takes a target score as input. | `accepted` | README §"Important limitation" |
 | T-4 | Reward = tokens | A grade reward counts as tokens only when a `gallery-token` image is present; otherwise reward 0 + `rewardText` (H6). | `verify` | `tests/test_parser.py::TestGradeTable` |
+| T-5 | Dynamic breakdowns | FUT.GG tag breakdowns (item counts, %, bonus numbers) move with card scores. They are **dated snapshots**, never timeless product values. Only the tag *model* (per-tag floor, top-10 cut) and the property assertions are stable. | `accepted` | `tests/test_score.py::TestBonusUnitBands.test_pl_same_league_snapshot_2026_10_04` |
 
 ## How to close a `verify` item
 
