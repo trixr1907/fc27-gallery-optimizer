@@ -42,8 +42,10 @@ For each Gallery set:
 
 - number of slots
 - D/C/B/A/S score thresholds
-- incremental Gallery Token reward at each grade
-- eligibility (club, league, rarity, or custom)
+- cumulative Gallery Token reward at each grade (the sum of all grade rewards up
+  to and including that grade — not the increment for that grade alone)
+- eligibility (club, league, rarity, or custom; an `ids` gallery lists the exact
+  member `itemId`s)
 
 Use **Data & Sync → Download template** to get the JSON schema.
 
@@ -66,6 +68,17 @@ FUT.GG notes that cards remain collected after sale, item scores + bonus tags de
 ## Important limitation
 
 EA does not publish a complete public score-to-Gallery-Level table. The app therefore optimizes calculated Gallery Score and lets you enter a **target Gallery score** from your in-game progress bar rather than guessing the score needed for a level.
+
+### Bonus base (T-1) — status: `verify`
+
+The app computes tag bonuses over **your lineup items for a set** (at most
+`slots` items). FUT.GG's set pages display bonuses computed over a **larger pool**
+— the positions listed on a page sum to more than the slot count (e.g. 23/15,
+35/30, 32/20). The two numbers therefore need not match, and the app **must not**
+blindly align its output with the visible FUT.GG figures. The UI accordingly
+labels this value **"Bonus over lineup items"**. This assumption is tracked as an
+open item in `AUDIT.md` and must be re-checked against the live site in the doc
+phase.
 
 ## Deploy on Render
 

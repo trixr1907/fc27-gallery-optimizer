@@ -106,49 +106,254 @@ input,select,textarea{background:#0b1117;border:1px solid var(--line);color:#fff
 <div class="modalbg" id="modalbg"><div class="modal"><div class="toolbar"><h2 id="modalTitle" style="margin:0"></h2><button class="btn" id="close">Close</button></div><div id="modalBody"></div></div></div>
 
 <script>
-const G=['D','C','B','A','S'];
-const TAG={
-sameNation:[[5,9,.01],[10,19,.02],[20,999,.04]],differentNation:[[5,9,.01],[10,19,.02],[20,999,.04]],
-sameClub:[[5,9,.01],[10,19,.02],[20,999,.04]],differentClub:[[5,9,.01],[10,19,.02],[20,999,.04]],
-sameLeague:[[5,9,.01],[10,19,.02],[20,999,.08]],differentLeague:[[5,9,.01],[10,19,.02],[20,999,.04]],
-bronze:[[5,9,.20],[10,19,.40],[20,999,.80]],silver:[[5,9,.15],[10,19,.30],[20,999,.60]],gold:[[5,9,.01],[10,19,.02],[20,999,.04]],
-holographic:[[2,3,.08],[4,5,.12],[6,999,.20]],icon:[[2,3,.10],[4,5,.15],[6,999,.25]],hero:[[2,3,.08],[4,5,.12],[6,999,.20]],
-totw:[[3,5,.04],[6,9,.08],[10,999,.15]],first:[[5,9,1.5],[10,19,3],[20,999,5]],gk:[[3,5,.03],[6,9,.06],[10,999,.15]],
-multi:[[2,2,.10],[3,3,.15],[4,999,.20]],wf:[[3,4,.03],[5,9,.06],[10,999,.12]],skills:[[3,4,.03],[5,9,.06],[10,999,.12]],
-def:[[5,9,.03],[10,14,.06],[15,999,.10]],mid:[[5,9,.03],[10,14,.06],[15,999,.10]],att:[[5,9,.03],[10,14,.06],[15,999,.10]]
+// ===== ENGINE START =====
+// FC 27 Gallery Optimizer — pure, side-effect-free engine.
+// This block is byte-identical in index.html and engine/engine.js.
+// It must NOT touch the DOM, localStorage, or any global `state`.
+// Every function takes its inputs as explicit parameters.
+
+// Grade order, weakest -> strongest.
+const G = ['D', 'C', 'B', 'A', 'S'];
+
+// Bonus tag tiers: [minItems, maxItems, percentage].
+// Frozen fixture: FUT.GG /fut-gallery/tags/ "21 tags", "Updated 27 Sept 2026".
+const TAG = {
+  sameNation: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  differentNation: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  sameClub: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  differentClub: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  sameLeague: [[5, 9, .01], [10, 19, .02], [20, 999, .08]],
+  differentLeague: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  bronze: [[5, 9, .20], [10, 19, .40], [20, 999, .80]],
+  silver: [[5, 9, .15], [10, 19, .30], [20, 999, .60]],
+  gold: [[5, 9, .01], [10, 19, .02], [20, 999, .04]],
+  holographic: [[2, 3, .08], [4, 5, .12], [6, 999, .20]],
+  icon: [[2, 3, .10], [4, 5, .15], [6, 999, .25]],
+  hero: [[2, 3, .08], [4, 5, .12], [6, 999, .20]],
+  totw: [[3, 5, .04], [6, 9, .08], [10, 999, .15]],
+  first: [[5, 9, 1.5], [10, 19, 3], [20, 999, 5]],
+  gk: [[3, 5, .03], [6, 9, .06], [10, 999, .15]],
+  multi: [[2, 2, .10], [3, 3, .15], [4, 999, .20]],
+  wf: [[3, 4, .03], [5, 9, .06], [10, 999, .12]],
+  skills: [[3, 4, .03], [5, 9, .06], [10, 999, .12]],
+  def: [[5, 9, .03], [10, 14, .06], [15, 999, .10]],
+  mid: [[5, 9, .03], [10, 14, .06], [15, 999, .10]],
+  att: [[5, 9, .03], [10, 14, .06], [15, 999, .10]]
 };
+
+// Number of active tag bonuses that actually pay. FUT.GG set pages state
+// verbatim "Only the ten biggest tags pay." -> default 10, configurable.
+const DEFAULT_COUNT_TOP_TAGS = 10;
+
+// Percentage for a tag rule at a given matched-item count, else 0.
+function pct(rule, n) {
+  for (const [a, b, p] of TAG[rule] || []) if (n >= a && n <= b) return p;
+  return 0;
+}
+
+// Core bonus primitive: floor(sum of matched item scores * pct).
+// Extracted as a standalone function so unit tests can target it directly.
+function bonus(matchedItems, p) {
+  if (!p) return 0;
+  const sum = matchedItems.reduce((s, x) => s + (+x.score || 0), 0);
+  return Math.floor(sum * p);
+}
+
+// Largest single group for a keyed attribute (e.g. same nation).
+function group(items, key, rule) {
+  const m = {};
+  items.forEach(p => { if (p[key]) (m[p[key]] ??= []).push(p); });
+  let best = 0;
+  for (const a of Object.values(m)) {
+    const q = pct(rule, a.length);
+    const b = bonus(a, q);
+    if (b > best) best = b;
+  }
+  return best;
+}
+
+// One entry per distinct key value (counts toward "different X" tags).
+function distinct(items, key, rule) {
+  const m = {};
+  items.forEach(p => { if (p[key] && (!m[p[key]] || +p.score > +m[p[key]].score)) m[p[key]] = p; });
+  const a = Object.values(m), q = pct(rule, a.length);
+  return bonus(a, q);
+}
+
+// Flat filtered set (e.g. all Silver cards).
+function filt(items, fn, rule) {
+  const a = items.filter(fn), q = pct(rule, a.length);
+  return bonus(a, q);
+}
+
+// Full tag breakdown for a list of items. Returns { base, bonus, total, tags }.
+// opts.countTopTags controls how many tag bonuses pay (default 10; Infinity = all).
+function score(items, opts) {
+  const countTopTags = opts && opts.countTopTags != null ? opts.countTopTags : DEFAULT_COUNT_TOP_TAGS;
+  const base = items.reduce((s, p) => s + (+p.score || 0), 0);
+  const b = [];
+  const add = x => { if (x > 0) b.push(x); };
+  add(group(items, 'nation', 'sameNation'));
+  add(distinct(items, 'nation', 'differentNation'));
+  add(group(items, 'club', 'sameClub'));
+  add(distinct(items, 'club', 'differentClub'));
+  add(group(items, 'league', 'sameLeague'));
+  add(distinct(items, 'league', 'differentLeague'));
+  add(filt(items, p => p.rarity === 'Bronze', 'bronze'));
+  add(filt(items, p => p.rarity === 'Silver', 'silver'));
+  add(filt(items, p => p.rarity === 'Gold', 'gold'));
+  add(filt(items, p => p.holographic, 'holographic'));
+  add(filt(items, p => p.special === 'Icon', 'icon'));
+  add(filt(items, p => p.special === 'Hero' || p.special === 'Heroic', 'hero'));
+  add(filt(items, p => p.special === 'TOTW' || p.special === 'Team of the Week', 'totw'));
+  add(filt(items, p => p.firstOwner, 'first'));
+  add(filt(items, p => p.position === 'GK', 'gk'));
+  // Multiples!: 2+ items of the same player (playerKey = canonical player id).
+  const mm = {};
+  items.forEach(p => (mm[p.playerKey || p.name] ??= []).push(p));
+  for (const a of Object.values(mm)) add(bonus(a, pct('multi', a.length)));
+  add(filt(items, p => +p.weakFoot >= 5, 'wf'));
+  add(filt(items, p => +p.skillMoves >= 5, 'skills'));
+  add(filt(items, p => ['CB', 'LB', 'RB'].includes(p.position), 'def'));
+  add(filt(items, p => ['CDM', 'CM', 'CAM', 'LM', 'RM'].includes(p.position), 'mid'));
+  add(filt(items, p => ['ST', 'LW', 'RW'].includes(p.position), 'att'));
+  b.sort((a, c) => c - a);
+  const paying = Number.isFinite(countTopTags) ? b.slice(0, countTopTags) : b.slice();
+  const bonusTotal = paying.reduce((a, c) => a + c, 0);
+  return { base, bonus: bonusTotal, total: base + bonusTotal, tags: b };
+}
+
+// Eligibility of a card for a set. Tolerant string comparison via norm().
+function eligible(p, g) {
+  const e = g.eligibility || {};
+  if (e.gender && e.gender !== 'any' && p.gender !== e.gender) return false;
+  if (e.type === 'club') return norm(p.club) === norm(e.value);
+  if (e.type === 'league') return norm(p.league) === norm(e.value);
+  if (e.type === 'rarity') return norm(p.special || p.rarity) === norm(e.value);
+  if (e.type === 'ids') return (e.ids || []).includes(p.itemId || p.id);
+  return (p.sets || []).includes(g.id);
+}
+
+// Normalization for tolerant name/type comparison (accents, club prefixes, aliases).
+function norm(s) {
+  if (s == null) return '';
+  let t = String(s).toLowerCase().trim();
+  t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // strip accents
+  const alias = {
+    'team of the week': 'totw',
+    'heroes': 'heroic',
+    'hero': 'heroic',
+    'holographics': 'holographic',
+    'holographic': 'holographic'
+  };
+  if (alias[t]) return alias[t];
+  // Drop common club suffixes/prefixes so "Málaga CF" == "Malaga CF".
+  t = t.replace(/\b(fc|cf|sc|ac|afc|club|de futbol|futbol)\b/g, ' ');
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+// Best lineup of <= n items. Greedy seed + hill-climb swap. Deterministic.
+// K6 identity model:
+//   itemId    = identity of one CARD (two card versions of a player differ).
+//   playerKey = canonical PLAYER (used only by "Multiples!").
+//   `id` is the app's per-row record id and is only a last-resort stand-in for
+//   a missing itemId -- never the canonical player identity.
+// The pool is de-duped by itemId first, so no two lineup items share a card.
+// Two items of the same player (same playerKey) are allowed and both kept.
+function lineup(pool, n) {
+  const byId = new Map();
+  for (const p of pool) {
+    const k = p.itemId || p.id;
+    const prev = byId.get(k);
+    if (!prev || (+p.score || 0) > (+prev.score || 0)) byId.set(k, p);
+  }
+  pool = [...byId.values()];
+  if (pool.length <= n) return { items: pool.slice(), ...score(pool) };
+  const cur = pool.slice().sort((a, b) => b.score - a.score).slice(0, n);
+  let cs = score(cur).total, curIds = new Set(cur.map(x => x.itemId || x.id));
+  for (let k = 0; k < 5; k++) {
+    let best = null;
+    for (let i = 0; i < n; i++) {
+      for (const c of pool) {
+        const cid = c.itemId || c.id;
+        if (curIds.has(cid)) continue;
+        const t = cur.slice(); t[i] = c;
+        const s = score(t).total;
+        if (s > cs && (!best || s > best.s)) best = { i, c, s };
+      }
+    }
+    if (!best) break;
+    curIds.delete(cur[best.i].itemId || cur[best.i].id);
+    cur[best.i] = best.c;
+    curIds.add(best.c.itemId || best.c.id);
+    cs = best.s;
+  }
+  return { items: cur, ...score(cur) };
+}
+
+// Highest grade reached given a score, or null if the set is not yet completable.
+function grade(g, count, s) {
+  if (count < g.slots) return null;
+  let z = null;
+  for (const x of G) if (s >= +(g.thresholds ?.[x] ?? Infinity)) z = x;
+  return z;
+}
+
+// Cumulative Gallery Tokens: sum of each grade's reward up to and including `gr`.
+function tokens(g, gr) {
+  if (!gr) return 0;
+  let n = 0;
+  for (const x of G) {
+    n += +(g.rewards ?.[x] || 0);
+    if (x === gr) break;
+  }
+  return n;
+}
+
+// Expected permanent coin loss = buy - (1 - tax) * resale, floored, clamped >= 0.
+function loss(p, taxRate) {
+  const buy = +p.buyPrice || 0;
+  const res = +p.resalePrice || buy;
+  return Math.max(0, buy - Math.floor(res * (1 - (taxRate ?? 0.05))));
+}
+
+// Evaluate one set against a player list.
+function evalG(g, players) {
+  const pool = players.filter(p => p.collected && eligible(p, g));
+  const l = lineup(pool, +g.slots || 15);
+  const gr = grade(g, l.items.length, l.total);
+  return { ...l, count: pool.length, grade: gr, tokens: tokens(g, gr), complete: pool.length >= g.slots };
+}
+
+// Aggregate over all sets. Returns { tokens, score, evals }.
+function summary(galleries, players) {
+  let t = 0, s = 0;
+  const e = {};
+  galleries.forEach(g => {
+    const x = evalG(g, players);
+    e[g.id] = x;
+    t += x.tokens;
+    if (x.complete) s += x.total;
+  });
+  return { tokens: t, score: s, evals: e };
+}
+// ===== ENGINE END =====
+if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary };
 const blank={settings:{coins:270000,taxRate:.05,objective:'eff',maxBundle:15},players:[],galleries:[]};
 let state=load(),last=[];
 function load(){try{const x=JSON.parse(localStorage.getItem('fc27gallery'));return x&&x.players&&x.galleries?Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})}):structuredClone(blank)}catch{return structuredClone(blank)}}
 function save(){localStorage.setItem('fc27gallery',JSON.stringify(state))}
+// UI-side convenience wrappers: bind the pure engine to the current app state.
+const loss0=p=>loss(p,state.settings.taxRate);
+const evalG0=g=>evalG(g,state.players);
+const summary0=()=>summary(state.galleries,state.players);
 const fmt=n=>Number(n||0).toLocaleString(), esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])), uid=(p='id')=>p+'_'+Math.random().toString(36).slice(2,9);
-function pct(rule,n){for(const [a,b,p] of TAG[rule]||[])if(n>=a&&n<=b)return p;return 0}
-function group(items,key,rule){let m={};items.forEach(p=>{if(p[key])(m[p[key]]??=[]).push(p)});let best=0;for(const a of Object.values(m)){let q=pct(rule,a.length);best=Math.max(best,q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0)}return best}
-function distinct(items,key,rule){let m={};items.forEach(p=>{if(p[key]&&(!m[p[key]]||+p.score>+m[p[key]].score))m[p[key]]=p});let a=Object.values(m),q=pct(rule,a.length);return q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0}
-function filt(items,fn,rule){let a=items.filter(fn),q=pct(rule,a.length);return q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0}
-function score(items){
- let base=items.reduce((s,p)=>s+(+p.score||0),0),b=[];
- const add=x=>{if(x>0)b.push(x)};
- add(group(items,'nation','sameNation'));add(distinct(items,'nation','differentNation'));add(group(items,'club','sameClub'));add(distinct(items,'club','differentClub'));add(group(items,'league','sameLeague'));add(distinct(items,'league','differentLeague'));
- add(filt(items,p=>p.rarity==='Bronze','bronze'));add(filt(items,p=>p.rarity==='Silver','silver'));add(filt(items,p=>p.rarity==='Gold','gold'));add(filt(items,p=>p.holographic,'holographic'));add(filt(items,p=>p.special==='Icon','icon'));add(filt(items,p=>p.special==='Hero','hero'));add(filt(items,p=>p.special==='TOTW','totw'));add(filt(items,p=>p.firstOwner,'first'));add(filt(items,p=>p.position==='GK','gk'));
- let mm={};items.forEach(p=>(mm[p.playerKey||p.name]??=[]).push(p));for(const a of Object.values(mm)){let q=pct('multi',a.length);if(q)add(Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q))}
- add(filt(items,p=>+p.weakFoot>=5,'wf'));add(filt(items,p=>+p.skillMoves>=5,'skills'));
- add(filt(items,p=>['CB','LB','RB'].includes(p.position),'def'));add(filt(items,p=>['CDM','CM','CAM','LM','RM'].includes(p.position),'mid'));add(filt(items,p=>['ST','LW','RW'].includes(p.position),'att'));
- b.sort((a,b)=>b-a);let bonus=b.slice(0,10).reduce((a,b)=>a+b,0);return {base,bonus,total:base+bonus}
-}
-function eligible(p,g){let e=g.eligibility||{};if(e.gender&&e.gender!=='any'&&p.gender!==e.gender)return false;if(e.type==='club')return (p.club||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='league')return (p.league||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='rarity')return (p.special||p.rarity||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='ids')return (e.playerIds||[]).includes(p.id);return (p.sets||[]).includes(g.id)}
-function lineup(pool,n){if(pool.length<=n)return {items:pool,...score(pool)};let cur=pool.slice().sort((a,b)=>b.score-a.score).slice(0,n),cs=score(cur).total;for(let k=0;k<5;k++){let best=null,ids=new Set(cur.map(x=>x.id));for(let i=0;i<n;i++)for(const c of pool)if(!ids.has(c.id)){let t=cur.slice();t[i]=c;let s=score(t).total;if(s>cs&&(!best||s>best.s))best={i,c,s}}if(!best)break;cur[best.i]=best.c;cs=best.s}return {items:cur,...score(cur)}}
-function grade(g,count,s){if(count<g.slots)return null;let z=null;for(const x of G)if(s>=+(g.thresholds?.[x]||Infinity))z=x;return z}
-function tokens(g,gr){if(!gr)return 0;let n=0;for(const x of G){n+=+(g.rewards?.[x]||0);if(x===gr)break}return n}
-function evalG(g,players=state.players){let pool=players.filter(p=>p.collected&&eligible(p,g)),l=lineup(pool,+g.slots||15),gr=grade(g,l.items.length,l.total);return {...l,count:pool.length,grade:gr,tokens:tokens(g,gr),complete:pool.length>=g.slots}}
-function summary(players=state.players){let t=0,s=0,e={};state.galleries.forEach(g=>{let x=evalG(g,players);e[g.id]=x;t+=x.tokens;if(x.complete)s+=x.total});return {tokens:t,score:s,evals:e}}
-function loss(p){let buy=+p.buyPrice||0,res=+p.resalePrice||buy;return Math.max(0,buy-Math.floor(res*(1-state.settings.taxRate)))}
 function opportunity(g){
- let base=evalG(g),cand=state.players.filter(p=>!p.collected&&eligible(p,g)&&+p.buyPrice>0).sort((a,b)=>loss(a)-loss(b)||b.score-a.score);
+ let base=evalG0(g),cand=state.players.filter(p=>!p.collected&&eligible(p,g)&&+p.buyPrice>0).sort((a,b)=>loss0(a)-loss0(b)||b.score-a.score);
  if(!cand.length)return null;let best=null,max=Math.min(state.settings.maxBundle||15,cand.length);
  let pool=cand.slice(0,Math.min(22,cand.length));
  for(let k=1;k<=max;k++){
-   let bundle=pool.slice(0,k),sim=state.players.map(p=>bundle.some(x=>x.id===p.id)?{...p,collected:true}:p),ne=evalG(g,sim),dt=ne.tokens-base.tokens,ds=(ne.complete?ne.total:0)-(base.complete?base.total:0),ls=bundle.reduce((s,p)=>s+loss(p),0),cap=Math.max(...bundle.map(p=>+p.buyPrice||0));
+   let bundle=pool.slice(0,k),sim=state.players.map(p=>bundle.some(x=>x.id===p.id)?{...p,collected:true}:p),ne=evalG(g,sim),dt=ne.tokens-base.tokens,ds=(ne.complete?ne.total:0)-(base.complete?base.total:0),ls=bundle.reduce((s,p)=>s+loss0(p),0),cap=Math.max(...bundle.map(p=>+p.buyPrice||0));
    let val=state.settings.objective==='tokens'?dt*1e9+ds:state.settings.objective==='score'?ds*1e5+dt*1e6:state.settings.objective==='balanced'?dt*1e7+ds*100-ls*10:(dt/Math.max(1,ls))*1e6+ds/Math.max(1,ls);
    if(dt>0||ds>0){let o={g,base,ne,bundle,dt,ds,loss:ls,cap,val};if(!best||o.val>best.val)best=o}
  }
@@ -159,7 +364,7 @@ function badge(x){return '<span class="grade '+(x||'')+'">'+(x||'—')+'</span>'
 function renderOpp(o){return '<div class="opp"><div class="opphead"><div><div class="oppname">'+esc(o.g.name)+' '+(o.base.grade||'—')+' → '+(o.ne.grade||'—')+'</div><div class="small muted">'+o.bundle.length+' purchase'+(o.bundle.length===1?'':'s')+'</div></div><div style="text-align:right"><div class="good" style="font-weight:900">+'+fmt(o.dt)+' tokens</div><div class="small muted">+'+fmt(o.ds)+' score</div></div></div><div class="chips">'+o.bundle.map(p=>'<span class="chip">'+esc(p.name)+' · '+fmt(p.buyPrice)+'</span>').join('')+'</div><div class="metrics"><span>Expected loss <b>'+fmt(o.loss)+'</b></span><span>Capital <b>'+fmt(o.cap)+'</b></span><span>New score <b>'+fmt(o.ne.total)+'</b></span></div></div>'}
 function nextG(g,e){let i=e.grade?G.indexOf(e.grade):-1;for(let j=i+1;j<G.length;j++){let gr=G[j],th=+g.thresholds?.[gr]||0;if(th)return {gr,th,dt:tokens(g,gr)-e.tokens}}return null}
 function render(){
- save();let s=summary();coinsStat.textContent=fmt(state.settings.coins);collectedStat.textContent=fmt(state.players.filter(p=>p.collected).length);dbStat.textContent=fmt(state.players.length)+' cards in database';tokensStat.textContent=fmt(s.tokens);scoreStat.textContent=fmt(s.score);startBanner.style.display=state.players.length&&state.galleries.length?'none':'block';
+ save();let s=summary0();coinsStat.textContent=fmt(state.settings.coins);collectedStat.textContent=fmt(state.players.filter(p=>p.collected).length);dbStat.textContent=fmt(state.players.length)+' cards in database';tokensStat.textContent=fmt(s.tokens);scoreStat.textContent=fmt(s.score);startBanner.style.display=state.players.length&&state.galleries.length?'none':'block';
  let arr=state.galleries.map(g=>({g,e:s.evals[g.id]}));arr.sort((a,b)=>{let na=nextG(a.g,a.e),nb=nextG(b.g,b.e);return (na?Math.max(0,na.th-a.e.total):1e20)-(nb?Math.max(0,nb.th-b.e.total):1e20)});
  closest.innerHTML=arr.slice(0,6).map(({g,e})=>{let n=nextG(g,e);return '<div class="opp"><div class="opphead"><b>'+esc(g.name)+'</b>'+badge(e.grade)+'</div><div class="small muted">'+e.count+'/'+g.slots+' collected · '+fmt(e.total)+' score</div>'+(n?'<div class="small" style="margin-top:7px"><b>'+fmt(Math.max(0,n.th-e.total))+'</b> score to '+n.gr+' · +'+n.dt+' tokens</div>':'<div class="small good" style="margin-top:7px">Max grade</div>')+'</div>'}).join('')||'<div class="empty">No sets yet.</div>';
  last=allOpps();dashOpps.innerHTML=last.slice(0,5).map(renderOpp).join('')||'<div class="empty">No priced upgrade opportunities yet.</div>';
@@ -168,32 +373,36 @@ function render(){
 }
 function renderSets(){
  let q=(setSearch.value||'').toLowerCase(),gs=state.galleries.filter(g=>!q||g.name.toLowerCase().includes(q));
- let body=gs.map(g=>{let e=evalG(g),n=nextG(g,e);return '<tr><td><b>'+esc(g.name)+'</b><div class="small muted">'+esc(g.eligibility?.type||'')+': '+esc(g.eligibility?.value||'')+'</div></td><td>'+e.count+'/'+g.slots+'</td><td>'+badge(e.grade)+'</td><td>'+fmt(e.total)+'</td><td>'+fmt(e.tokens)+'</td><td>'+(n?n.gr+' · '+fmt(n.th)+' · +'+n.dt:'Maxed')+'</td><td><button class="btn editSet" data-id="'+g.id+'">Edit</button></td></tr>'}).join('');
+ let body=gs.map(g=>{let e=evalG0(g),n=nextG(g,e);return '<tr><td><b>'+esc(g.name)+'</b><div class="small muted">'+esc(g.eligibility?.type||'')+': '+esc(g.eligibility?.value||'')+'</div></td><td>'+e.count+'/'+g.slots+'</td><td>'+badge(e.grade)+'</td><td>'+fmt(e.total)+'</td><td>'+fmt(e.tokens)+'</td><td>'+(n?n.gr+' · '+fmt(n.th)+' · +'+n.dt:'Maxed')+'</td><td><button class="btn editSet" data-id="'+g.id+'">Edit</button></td></tr>'}).join('');
  let t=gs.length?'<div class="table"><table><thead><tr><th>Set</th><th>Collected</th><th>Grade</th><th>Score</th><th>Tokens</th><th>Next</th><th></th></tr></thead><tbody>'+body+'</tbody></table></div>':'<div class="empty">No Gallery sets.</div>';setsTable.innerHTML=t;dashSets.innerHTML=t;document.querySelectorAll('.editSet').forEach(b=>b.onclick=()=>setModal(b.dataset.id))
 }
 function renderPlayers(){
  let q=(playerSearch.value||'').toLowerCase(),ps=state.players.filter(p=>!q||[p.name,p.club,p.league,p.nation].join(' ').toLowerCase().includes(q));
- players.innerHTML=ps.length?'<div class="table"><table><thead><tr><th>Collected</th><th>Player</th><th>Score</th><th>Club</th><th>Type</th><th>Buy</th><th>Resale</th><th>Loss</th><th></th></tr></thead><tbody>'+ps.map(p=>'<tr><td><input type="checkbox" class="col" data-id="'+p.id+'" '+(p.collected?'checked':'')+'></td><td><b>'+esc(p.name)+'</b><div class="small muted">'+esc(p.position||'')+' · '+esc(p.nation||'')+'</div></td><td>'+fmt(p.score)+'</td><td>'+esc(p.club||'')+'<div class="small muted">'+esc(p.league||'')+'</div></td><td>'+esc(p.special||p.rarity||'')+'</td><td>'+fmt(p.buyPrice)+'</td><td>'+fmt(p.resalePrice)+'</td><td>'+fmt(loss(p))+'</td><td><button class="btn editP" data-id="'+p.id+'">Edit</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching players.</div>';
+ players.innerHTML=ps.length?'<div class="table"><table><thead><tr><th>Collected</th><th>Player</th><th>Score</th><th>Club</th><th>Type</th><th>Buy</th><th>Resale</th><th>Loss</th><th></th></tr></thead><tbody>'+ps.map(p=>'<tr><td><input type="checkbox" class="col" data-id="'+p.id+'" '+(p.collected?'checked':'')+'></td><td><b>'+esc(p.name)+'</b><div class="small muted">'+esc(p.position||'')+' · '+esc(p.nation||'')+'</div></td><td>'+fmt(p.score)+'</td><td>'+esc(p.club||'')+'<div class="small muted">'+esc(p.league||'')+'</div></td><td>'+esc(p.special||p.rarity||'')+'</td><td>'+fmt(p.buyPrice)+'</td><td>'+fmt(p.resalePrice)+'</td><td>'+fmt(loss0(p))+'</td><td><button class="btn editP" data-id="'+p.id+'">Edit</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching players.</div>';
  document.querySelectorAll('.col').forEach(c=>c.onchange=()=>{state.players.find(p=>p.id===c.dataset.id).collected=c.checked;render()});document.querySelectorAll('.editP').forEach(b=>b.onclick=()=>playerModal(b.dataset.id))
 }
 function modal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modalbg.classList.add('show')}
 function playerModal(id){
- let p=state.players.find(x=>x.id===id)||{id:uid('p'),name:'',score:0,buyPrice:0,resalePrice:0,collected:false,firstOwner:false,club:'',league:'',nation:'',rarity:'Silver',special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false};
+ let p=state.players.find(x=>x.id===id)||{id:uid('p'),itemId:'',playerKey:'',name:'',score:0,buyPrice:0,resalePrice:0,collected:false,firstOwner:false,club:'',league:'',nation:'',rarity:'Silver',special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false,sets:''};
  modal(id?'Edit player':'Add player','<div class="formgrid">'+
- [['Name','name'],['Gallery item score','score'],['Buy price','buyPrice'],['Expected resale','resalePrice'],['Club','club'],['League','league'],['Nation','nation'],['Position','position']].map(([l,k])=>'<div class="field"><label>'+l+'</label><input id="p_'+k+'" value="'+esc(p[k])+'"></div>').join('')+
- '<div class="field"><label>Rarity</label><select id="p_rarity"><option>Bronze</option><option>Silver</option><option>Gold</option></select></div><div class="field"><label>Special</label><select id="p_special"><option value="">Base</option><option>Hero</option><option>Icon</option><option>TOTW</option></select></div><div class="field"><label>Gender</label><select id="p_gender"><option value="men">Men</option><option value="women">Women</option></select></div><div class="field"><label>Collected</label><input id="p_collected" type="checkbox" '+(p.collected?'checked':'')+'></div><div class="field"><label>First owner</label><input id="p_first" type="checkbox" '+(p.firstOwner?'checked':'')+'></div></div><div style="margin-top:13px"><button class="btn primary" id="saveP">Save</button> '+(id?'<button class="btn danger" id="delP">Delete</button>':'')+'</div>');
+ [['Name','name'],['Gallery item score','score'],['Buy price','buyPrice'],['Expected resale','resalePrice'],['Club','club'],['League','league'],['Nation','nation'],['Position','position'],['Item ID (card identity)','itemId'],['Player identity / linked group','playerKey'],['Weak foot (1-5)','weakFoot'],['Skill moves (1-5)','skillMoves'],['Custom set ids (comma separated)','sets']].map(([l,k])=>'<div class="field"><label>'+l+'</label><input id="p_'+k+'" value="'+esc(Array.isArray(p[k])?p[k].join(','):(p[k]??''))+'"></div>').join('')+
+ '<div class="field"><label>Rarity</label><select id="p_rarity"><option>Bronze</option><option>Silver</option><option>Gold</option></select></div><div class="field"><label>Special</label><select id="p_special"><option value="">Base</option><option>Hero</option><option>Heroic</option><option>Icon</option><option>TOTW</option></select></div><div class="field"><label>Gender</label><select id="p_gender"><option value="men">Men</option><option value="women">Women</option></select></div><div class="field"><label>Collected</label><input id="p_collected" type="checkbox" '+(p.collected?'checked':'')+'></div><div class="field"><label>First owner</label><input id="p_first" type="checkbox" '+(p.firstOwner?'checked':'')+'></div><div class="field"><label>Holographic</label><input id="p_holo" type="checkbox" '+(p.holographic?'checked':'')+'></div></div><div style="margin-top:13px"><button class="btn primary" id="saveP">Save</button> '+(id?'<button class="btn danger" id="delP">Delete</button>':'')+'</div>');
  p_rarity.value=p.rarity||'Silver';p_special.value=p.special||'';p_gender.value=p.gender||'men';
- saveP.onclick=()=>{let np={...p};['name','club','league','nation','position'].forEach(k=>np[k]=document.getElementById('p_'+k).value);['score','buyPrice','resalePrice'].forEach(k=>np[k]=+document.getElementById('p_'+k).value);np.rarity=p_rarity.value;np.special=p_special.value;np.gender=p_gender.value;np.collected=p_collected.checked;np.firstOwner=p_first.checked;if(id)Object.assign(p,np);else state.players.push(np);modalbg.classList.remove('show');render()};if(id)delP.onclick=()=>{state.players=state.players.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
+ saveP.onclick=()=>{let np={...p};['name','club','league','nation','position','itemId','playerKey'].forEach(k=>np[k]=document.getElementById('p_'+k).value);['score','buyPrice','resalePrice','weakFoot','skillMoves'].forEach(k=>np[k]=+document.getElementById('p_'+k).value);np.sets=document.getElementById('p_sets').value.split(',').map(s=>s.trim()).filter(Boolean);np.rarity=p_rarity.value;np.special=p_special.value;np.gender=p_gender.value;np.collected=p_collected.checked;np.firstOwner=p_first.checked;np.holographic=p_holo.checked;
+ // itemId = identity of THIS card row. It falls back to the record id (p.id),
+ // which is unique per saved row -- NOT to playerKey. Two card versions of one
+ // player share playerKey (Multiples!) but must keep distinct itemIds.
+ np.itemId=np.itemId||np.id;if(id)Object.assign(p,np);else state.players.push(np);modalbg.classList.remove('show');render()};if(id)delP.onclick=()=>{state.players=state.players.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
 }
 function setModal(id){
  let g=state.galleries.find(x=>x.id===id)||{id:uid('g'),name:'',slots:15,eligibility:{type:'club',value:'',gender:'any'},thresholds:{D:10,C:300,B:500,A:700,S:1000},rewards:{D:0,C:0,B:5,A:8,S:15}};
- modal(id?'Edit Gallery set':'Add Gallery set','<div class="formgrid"><div class="field"><label>Name</label><input id="g_name" value="'+esc(g.name)+'"></div><div class="field"><label>Slots</label><input id="g_slots" type="number" value="'+g.slots+'"></div><div class="field"><label>Eligibility</label><select id="g_type"><option>club</option><option>league</option><option>rarity</option><option>custom</option></select></div><div class="field"><label>Value</label><input id="g_value" value="'+esc(g.eligibility?.value||'')+'"></div><div class="field"><label>Gender</label><select id="g_gender"><option value="any">Any</option><option value="men">Men</option><option value="women">Women</option></select></div></div><h3>Thresholds / incremental tokens</h3><div class="formgrid">'+G.map(x=>'<div class="field"><label>'+x+' threshold</label><input id="gt_'+x+'" type="number" value="'+(g.thresholds?.[x]||0)+'"></div><div class="field"><label>'+x+' tokens</label><input id="gr_'+x+'" type="number" value="'+(g.rewards?.[x]||0)+'"></div>').join('')+'</div><div style="margin-top:13px"><button class="btn primary" id="saveG">Save</button> '+(id?'<button class="btn danger" id="delG">Delete</button>':'')+'</div>');
+ modal(id?'Edit Gallery set':'Add Gallery set','<div class="formgrid"><div class="field"><label>Name</label><input id="g_name" value="'+esc(g.name)+'"></div><div class="field"><label>Slots</label><input id="g_slots" type="number" value="'+g.slots+'"></div><div class="field"><label>Eligibility</label><select id="g_type"><option>club</option><option>league</option><option>rarity</option><option>ids</option><option>custom</option></select></div><div class="field"><label>Value <span class="small muted">(ids: comma separated itemIds)</span></label><input id="g_value" value="'+esc(g.eligibility?.value||(g.eligibility?.ids||[]).join(','))+'"></div><div class="field"><label>Gender</label><select id="g_gender"><option value="any">Any</option><option value="men">Men</option><option value="women">Women</option></select></div></div><h3>Thresholds / cumulative tokens</h3><div class="formgrid">'+G.map(x=>'<div class="field"><label>'+x+' threshold</label><input id="gt_'+x+'" type="number" value="'+(g.thresholds?.[x]||0)+'"></div><div class="field"><label>'+x+' tokens</label><input id="gr_'+x+'" type="number" value="'+(g.rewards?.[x]||0)+'"></div>').join('')+'</div><div style="margin-top:13px"><button class="btn primary" id="saveG">Save</button> '+(id?'<button class="btn danger" id="delG">Delete</button>':'')+'</div>');
  g_type.value=g.eligibility?.type||'club';g_gender.value=g.eligibility?.gender||'any';
- saveG.onclick=()=>{let ng={...g,name:g_name.value,slots:+g_slots.value,eligibility:{type:g_type.value,value:g_value.value,gender:g_gender.value},thresholds:{},rewards:{}};G.forEach(x=>{ng.thresholds[x]=+document.getElementById('gt_'+x).value;ng.rewards[x]=+document.getElementById('gr_'+x).value});if(id)Object.assign(g,ng);else state.galleries.push(ng);modalbg.classList.remove('show');render()};if(id)delG.onclick=()=>{state.galleries=state.galleries.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
+ saveG.onclick=()=>{let ng={...g,name:g_name.value,slots:+g_slots.value,eligibility:{type:g_type.value,value:g_value.value,gender:g_gender.value},thresholds:{},rewards:{}};if(g_type.value==='ids'){ng.eligibility.ids=g_value.value.split(',').map(s=>s.trim()).filter(Boolean)}G.forEach(x=>{ng.thresholds[x]=+document.getElementById('gt_'+x).value;ng.rewards[x]=+document.getElementById('gr_'+x).value});if(id)Object.assign(g,ng);else state.galleries.push(ng);modalbg.classList.remove('show');render()};if(id)delG.onclick=()=>{state.galleries=state.galleries.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
 }
 function runOptimizer(){last=allOpps();opps.innerHTML=last.slice(0,40).map(renderOpp).join('')||'<div class="empty">No viable upgrades found.</div>';dashOpps.innerHTML=last.slice(0,5).map(renderOpp).join('')||'<div class="empty">No viable upgrades found.</div>'}
 function download(name,obj){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}));a.download=name;a.click()}
-function demoState(){let s=structuredClone(blank),make=(id,name,score,price,c,club,league,rarity='Silver')=>({id,name,score,buyPrice:price,resalePrice:price,collected:c,firstOwner:false,club,league,nation:'Spain',rarity,special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3});for(let i=1;i<=15;i++)s.players.push(make('a'+i,'Athletic Player '+i,i<9?80:180+(i%3)*70,700+i*40,i<9,'Athletic Club','LALIGA EA SPORTS',i>12?'Bronze':'Silver'));s.galleries=[{id:'athletic',name:'Athletic Club',slots:15,eligibility:{type:'club',value:'Athletic Club',gender:'men'},thresholds:{D:10,C:900,B:1600,A:2400,S:3600},rewards:{D:0,C:5,B:10,A:15,S:25}}];return s}
+function demoState(){let s=structuredClone(blank),make=(id,name,score,price,c,club,league,rarity='Silver')=>({id,itemId:id,playerKey:name.toLowerCase().replace(/[^a-z0-9]+/g,'-'),name,score,buyPrice:price,resalePrice:price,collected:c,firstOwner:false,club,league,nation:'Spain',rarity,special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false,sets:[]});for(let i=1;i<=15;i++)s.players.push(make('a'+i,'Athletic Player '+i,i<9?80:180+(i%3)*70,700+i*40,i<9,'Athletic Club','LALIGA EA SPORTS',i>12?'Bronze':'Silver'));s.galleries=[{id:'athletic',name:'Athletic Club',slots:15,eligibility:{type:'club',value:'Athletic Club',gender:'men'},thresholds:{D:10,C:900,B:1600,A:2400,S:3600},rewards:{D:0,C:5,B:10,A:15,S:25}}];return s}
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));document.getElementById(b.dataset.section).classList.add('active');title.textContent=b.textContent;subtitle.textContent={dashboard:'Find the cheapest route to more Gallery tokens and score.',optimizer:'Rank bundles by token and score value.',collection:'Track cards that have passed through your club.',sets:'Replicate each Gallery set and its grade thresholds.',data:'Bring your real collection into the optimizer.'}[b.dataset.section]});
 demo.onclick=()=>{state=demoState();render()};export.onclick=()=>download('fc27-gallery-state.json',state);template.onclick=()=>download('fc27-gallery-template.json',blank);reset.onclick=()=>{if(confirm('Reset local data?')){state=structuredClone(blank);render()}};run.onclick=runOptimizer;runTop.onclick=()=>{document.querySelector('[data-section=optimizer]').click();runOptimizer()};addPlayer.onclick=()=>playerModal();addSet.onclick=()=>setModal();close.onclick=()=>modalbg.classList.remove('show');modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove('show')};playerSearch.oninput=renderPlayers;setSearch.oninput=renderSets;
 [objective,coins,tax,bundle].forEach(el=>el.onchange=()=>{state.settings.objective=objective.value;state.settings.coins=+coins.value;state.settings.taxRate=+tax.value;state.settings.maxBundle=+bundle.value;render()});
