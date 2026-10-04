@@ -7,7 +7,9 @@ its first tier, and the resulting bonus is asserted EQUAL to the tier's
 floor(sum * pct) computed from the tag table itself.
 
 The expected percentage is read from the LIVE TAG table via the engine, so the
-test cannot drift from the engine's own tier definition.
+test cannot drift from the engine's own tier definition. The engine's tier table
+is itself checked against an independent dated fixture in `test_tag_table.py`
+(so this module's self-referential oracle is backed by an external one).
 """
 import math
 import os

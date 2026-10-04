@@ -176,5 +176,57 @@ class TestFormSaveBehavior(unittest.TestCase):
         self.assertEqual(np["sets"], [])
 
 
+class TestAppScriptParse(unittest.TestCase):
+    """The app's inline script must actually PARSE in a browser engine.
+
+    Regression for a pre-existing bug: the Export button had `id="export"` and
+    the wiring used `export.onclick=...`. `export` is a reserved word, so the
+    whole inline script threw `SyntaxError: Unexpected token 'export'` in
+    Chrome/Edge -- the app rendered but NO handler attached (render() never ran).
+    `node --check` on a .js file does NOT catch this (sloppy-script mode allows a
+    binding named `export`); only a real parse as a *classic script* does, which
+    is what this test emulates with `new Function` (also a classic script body).
+    """
+
+    def test_script_parses_as_classic_script(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not found on PATH")
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        m = re.search(r"<script>(.*)</script>", html, re.S)
+        self.assertIsNotNone(m, "inline <script> not found")
+        # Parse in Node's classic-script context (Function body == classic
+        # script): `new Function(src)` throws on the reserved-word misuse.
+        script = (
+            "const fs=require('fs');"
+            "const src=fs.readFileSync(process.env.PARSE_FILE,'utf8');"
+            "try{ new Function(src); }catch(e){ process.stdout.write('PARSEFAIL:'+e.message); process.exit(0);} "
+            "process.stdout.write('OK');"
+        )
+        tmp = os.path.join(root, "_parse_probe.js")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(m.group(1))
+            env = dict(os.environ, PARSE_FILE=tmp)
+            out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30, env=env)
+            self.assertEqual(out.stdout, "OK", "inline script does not parse: " + out.stdout + out.stderr)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    def test_no_reserved_word_ids(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        reserved = {"export", "import", "default", "class", "function", "return",
+                    "delete", "typeof", "void", "in", "of", "do", "if", "else",
+                    "for", "while", "switch", "case", "new", "this", "super",
+                    "extends", "yield", "await", "enum", "null", "true", "false"}
+        bad = [i for i in re.findall(r'id="([^"]+)"', html) if i in reserved]
+        self.assertEqual(bad, [], "reserved-word element ids break the inline script: %r" % bad)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

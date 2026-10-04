@@ -41,17 +41,20 @@ class EngineCli:
 
     def call(self, fn, *args):
         """Send one request, return the unwrapped result (raises on engine error)."""
-        req = json.dumps({"fn": fn, "args": list(args)})
-        self.proc.stdin.write(req + "\n")
+        out = self.raw(json.dumps({"fn": fn, "args": list(args)}))
+        if not out.get("ok"):
+            raise RuntimeError("engine error for fn=%s: %s" % (fn, out.get("error")))
+        return out["result"]
+
+    def raw(self, request_json):
+        """Send a prebuilt request line, return the whole response object."""
+        self.proc.stdin.write(request_json + "\n")
         self.proc.stdin.flush()
         line = self.proc.stdout.readline()
         if not line:
             err = self.proc.stderr.read()
             raise RuntimeError("engine_cli.js produced no output; stderr=%r" % err)
-        out = json.loads(line)
-        if not out.get("ok"):
-            raise RuntimeError("engine error for fn=%s: %s" % (fn, out.get("error")))
-        return out["result"]
+        return json.loads(line)
 
     def exports(self):
         return self.call("__ping__")["exports"]

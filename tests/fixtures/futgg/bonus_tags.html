@@ -1,0 +1,39 @@
+<!--
+offline fixture: futgg bonus-tags table | fetched 2026-10-04 | source https://www.fut.gg/fut-gallery/tags/
+21 tags. Updated 27 Sept 2026.
+
+Purpose: an INDEPENDENT copy of the 21-tag percentage table, captured as rendered
+on the live page. Tests parse THIS file and compare it against the engine's TAG
+table, so a wrong value *inside* the engine table is detectable (the engine table
+is not the oracle for itself).
+
+Format mirrors the live page rows verbatim. Each row carries a data-tag-key
+attribute holding the engine key, so the mapping is explicit and does not depend
+on the display name. A row looks like: tr[data-tag-key] with a name cell, a
+description cell and a tier list of li items ("5-9 +1%", "20+ +4%").
+-->
+<table id="gallery-tags" data-total="21" data-updated="27 Sept 2026">
+<tbody>
+<tr data-tag-key="sameNation"><td>Same Nation</td><td>Requires players from the same nation.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="differentNation"><td>Different Nation</td><td>Requires players from different nations.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="sameClub"><td>Same Club</td><td>Requires players from the same club.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="differentClub"><td>Different Club</td><td>Requires players from different clubs.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="sameLeague"><td>Same League</td><td>Requires players from the same league.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +8%</li></ul></td></tr>
+<tr data-tag-key="differentLeague"><td>Different League</td><td>Requires players from different leagues.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="bronze"><td>Bronze</td><td>Requires Bronze players.</td><td><ul><li>5–9 +20%</li><li>10–19 +40%</li><li>20+ +80%</li></ul></td></tr>
+<tr data-tag-key="silver"><td>Silver</td><td>Requires Silver players.</td><td><ul><li>5–9 +15%</li><li>10–19 +30%</li><li>20+ +60%</li></ul></td></tr>
+<tr data-tag-key="gold"><td>Golden</td><td>Requires Gold players.</td><td><ul><li>5–9 +1%</li><li>10–19 +2%</li><li>20+ +4%</li></ul></td></tr>
+<tr data-tag-key="holographic"><td>Holographic</td><td>Requires Holographic players.</td><td><ul><li>2–3 +8%</li><li>4–5 +12%</li><li>6+ +20%</li></ul></td></tr>
+<tr data-tag-key="icon"><td>Iconic</td><td>Requires Icon players.</td><td><ul><li>2–3 +10%</li><li>4–5 +15%</li><li>6+ +25%</li></ul></td></tr>
+<tr data-tag-key="hero"><td>Heroic</td><td>Requires Heroes players.</td><td><ul><li>2–3 +8%</li><li>4–5 +12%</li><li>6+ +20%</li></ul></td></tr>
+<tr data-tag-key="totw"><td>TOTW</td><td>Requires TOTW players.</td><td><ul><li>3–5 +4%</li><li>6–9 +8%</li><li>10+ +15%</li></ul></td></tr>
+<tr data-tag-key="first"><td>First Owner</td><td>Requires First Owner players.</td><td><ul><li>5–9 +150%</li><li>10–19 +300%</li><li>20+ +500%</li></ul></td></tr>
+<tr data-tag-key="gk"><td>Hands Only</td><td>Requires players that are goalkeepers.</td><td><ul><li>3–5 +3%</li><li>6–9 +6%</li><li>10+ +15%</li></ul></td></tr>
+<tr data-tag-key="multi"><td>Multiples!</td><td>Requires 2 of the same player.</td><td><ul><li>2–2 +10%</li><li>3–3 +15%</li><li>4+ +20%</li></ul></td></tr>
+<tr data-tag-key="wf"><td>Ambidextrous</td><td>Requires players who have 5 star weak foot.</td><td><ul><li>3–4 +3%</li><li>5–9 +6%</li><li>10+ +12%</li></ul></td></tr>
+<tr data-tag-key="skills"><td>Skilled</td><td>Requires players who have 5 star skill moves.</td><td><ul><li>3–4 +3%</li><li>5–9 +6%</li><li>10+ +12%</li></ul></td></tr>
+<tr data-tag-key="def"><td>Defensive Wall</td><td>Requires players from defensive positions (CB, LB, RB).</td><td><ul><li>5–9 +3%</li><li>10–14 +6%</li><li>15+ +10%</li></ul></td></tr>
+<tr data-tag-key="mid"><td>Midfield Control</td><td>Requires players from midfield positions (CDM, CM, CAM, LM, RM).</td><td><ul><li>5–9 +3%</li><li>10–14 +6%</li><li>15+ +10%</li></ul></td></tr>
+<tr data-tag-key="att"><td>All out Attack</td><td>Requires players from attacking positions (ST, RW, LW).</td><td><ul><li>5–9 +3%</li><li>10–14 +6%</li><li>15+ +10%</li></ul></td></tr>
+</tbody>
+</table>

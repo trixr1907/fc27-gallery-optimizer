@@ -2,3 +2,11 @@ __pycache__/
 .DS_Store
 *.pyc
 .workbuddy-ai/
+# local dev scratch (browser probes, server logs)
+_app_check.js
+_baseline.html
+_shot.html
+_mk_shot.js
+_probe.jsonl
+_srv.log
+_srv.log.*
