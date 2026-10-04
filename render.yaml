@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: fc27-gallery-optimizer
+    runtime: python
+    plan: free
+    buildCommand: "echo No build step required"
+    startCommand: "python3 server.py --no-open"

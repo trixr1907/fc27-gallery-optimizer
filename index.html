@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FC 27 Gallery Optimizer</title>
+<style>
+:root{--bg:#090c10;--p:#121820;--p2:#18212b;--line:#263443;--text:#f5f8fb;--muted:#91a1b3;--green:#65e693;--blue:#79aaff;--amber:#f4c45d;--red:#ff7777}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#07090c,#0c1117);color:var(--text);font:14px Inter,system-ui,-apple-system,sans-serif;min-height:100vh}
+.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:22px 14px;background:#0b1015;position:sticky;top:0;height:100vh}.brand{font-size:18px;font-weight:850;margin:3px 8px 24px}.brand b{color:var(--green)}
+.nav button{width:100%;text-align:left;background:transparent;border:0;color:var(--muted);padding:11px 12px;border-radius:9px;cursor:pointer;margin:2px 0}.nav button.active,.nav button:hover{background:var(--p2);color:#fff}
+.note{position:absolute;bottom:18px;left:14px;right:14px;color:var(--muted);font-size:11px;line-height:1.45;padding:11px;border:1px solid var(--line);border-radius:10px}
+main{padding:28px;max-width:1450px;width:100%;min-width:0;margin:auto;overflow-x:hidden}.top{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-bottom:20px}.top h1{margin:0 0 5px;font-size:27px}.top p{margin:0;color:var(--muted)}
+.btn{border:1px solid var(--line);background:var(--p2);color:#fff;padding:9px 12px;border-radius:9px;cursor:pointer;font-weight:700}.btn.primary{background:var(--green);border-color:var(--green);color:#08210f}.btn.danger{color:#ffb2b2}
+.grid{display:grid;gap:13px}.stats{grid-template-columns:repeat(4,minmax(0,1fr))}.card{background:rgba(18,24,32,.94);border:1px solid var(--line);border-radius:14px}.stat{padding:17px}.label{color:var(--muted);font-size:11px}.value{font-size:27px;font-weight:850;margin-top:7px}.sub{color:var(--muted);font-size:11px;margin-top:5px}.panel{padding:17px;margin-top:13px}.panel h2{font-size:16px;margin:0 0 13px}.two{grid-template-columns:1.2fr .8fr}.section{display:none}.section.active{display:block}
+.toolbar{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:11px}.toolbar>div{display:flex;gap:8px;flex-wrap:wrap}
+input,select,textarea{background:#0b1117;border:1px solid var(--line);color:#fff;border-radius:8px;padding:9px 10px}input[type=number]{width:120px}.wide{min-width:250px}
+.table{overflow:auto;border:1px solid var(--line);border-radius:10px}table{width:100%;border-collapse:collapse;min-width:800px}th,td{padding:10px;border-bottom:1px solid #202b36;text-align:left;font-size:12px}th{color:#a9b5c4;background:#10161d;position:sticky;top:0}tr:last-child td{border-bottom:0}
+.grade{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;font-weight:900;background:#313a45}.S{background:#6240a7}.A{background:#24764c}.B{background:#356b9e}.C{background:#71612f}.D{background:#555d66}.good{color:var(--green)}.muted{color:var(--muted)}.amber{color:var(--amber)}.red{color:var(--red)}
+.opp{padding:13px;border:1px solid var(--line);background:#0f151b;border-radius:11px;margin-bottom:8px}.opphead{display:flex;justify-content:space-between;gap:10px}.oppname{font-weight:800}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}.chip{padding:5px 7px;background:#17202a;border:1px solid #2b3948;border-radius:7px;font-size:10px}.metrics{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11px;margin-top:9px}.metrics b{color:#fff}
+.formgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:5px}.field input,.field select{width:100%}.banner{padding:12px 14px;border:1px solid #2d5639;background:#0e2015;color:#bff2ce;border-radius:10px;margin-bottom:13px}
+.modalbg{display:none;position:fixed;inset:0;background:#000b;z-index:20;align-items:center;justify-content:center;padding:20px}.modalbg.show{display:flex}.modal{width:min(850px,96vw);max-height:90vh;overflow:auto;background:#10161d;border:1px solid var(--line);border-radius:14px;padding:19px}
+.empty{text-align:center;color:var(--muted);padding:28px}.small{font-size:11px}.actions{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:900px){.app{grid-template-columns:1fr}.side{height:auto;position:relative;border-right:0;border-bottom:1px solid var(--line)}.nav{display:flex;overflow:auto}.nav button{width:auto;white-space:nowrap}.note{display:none}.stats,.two,.formgrid{grid-template-columns:1fr 1fr}main{padding:18px}}
+@media(max-width:620px){.stats,.two,.formgrid{grid-template-columns:1fr}.top{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="side">
+  <div class="brand">FC27 <b>Gallery</b> Optimizer</div>
+  <div class="nav">
+    <button class="active" data-section="dashboard">Dashboard</button>
+    <button data-section="optimizer">Optimizer</button>
+    <button data-section="collection">Collection</button>
+    <button data-section="sets">Gallery Sets</button>
+    <button data-section="data">Data & Sync</button>
+  </div>
+  <div class="note">Your state stays in this browser. The app does not execute EA Transfer Market trades.</div>
+</aside>
+<main>
+<div class="top">
+  <div><h1 id="title">Dashboard</h1><p id="subtitle">Find the cheapest route to more Gallery tokens and score.</p></div>
+  <div class="actions"><button class="btn" id="demo">Load demo</button><button class="btn" id="export">Export</button><button class="btn primary" id="runTop">Run optimizer</button></div>
+</div>
+
+<section id="dashboard" class="section active">
+  <div class="grid stats">
+    <div class="card stat"><div class="label">Coins</div><div class="value" id="coinsStat">0</div><div class="sub">Working capital</div></div>
+    <div class="card stat"><div class="label">Collected</div><div class="value" id="collectedStat">0</div><div class="sub" id="dbStat">0 cards in database</div></div>
+    <div class="card stat"><div class="label">Tokens earned</div><div class="value" id="tokensStat">0</div><div class="sub">From current grades</div></div>
+    <div class="card stat"><div class="label">Gallery score</div><div class="value" id="scoreStat">0</div><div class="sub">Completed-set score sum</div></div>
+  </div>
+  <div id="startBanner" class="banner">Import your players + Gallery sets under <b>Data & Sync</b>, or load the demo.</div>
+  <div class="grid two">
+    <div class="card panel"><h2>Best next opportunities</h2><div id="dashOpps"></div></div>
+    <div class="card panel"><h2>Closest upgrades</h2><div id="closest"></div></div>
+  </div>
+  <div class="card panel"><h2>Set overview</h2><div id="dashSets"></div></div>
+</section>
+
+<section id="optimizer" class="section">
+  <div class="card panel">
+    <h2>Settings</h2>
+    <div class="formgrid">
+      <div class="field"><label>Objective</label><select id="objective"><option value="eff">Tokens / coin loss</option><option value="tokens">Maximum tokens</option><option value="score">Maximum Gallery score</option><option value="balanced">Balanced</option></select></div>
+      <div class="field"><label>Coins</label><input id="coins" type="number"></div>
+      <div class="field"><label>Tax rate</label><input id="tax" type="number" step=".01"></div>
+      <div class="field"><label>Max bundle size</label><input id="bundle" type="number" min="1" max="20"></div>
+    </div>
+    <div style="margin-top:12px"><button class="btn primary" id="run">Calculate</button></div>
+  </div>
+  <div class="card panel"><h2>Recommended upgrades</h2><div id="opps"></div></div>
+</section>
+
+<section id="collection" class="section">
+  <div class="card panel">
+    <div class="toolbar"><div><input id="playerSearch" class="wide" placeholder="Search player, club, league…"></div><div><button class="btn primary" id="addPlayer">Add player</button></div></div>
+    <div id="players"></div>
+  </div>
+</section>
+
+<section id="sets" class="section">
+  <div class="card panel">
+    <div class="toolbar"><div><input id="setSearch" class="wide" placeholder="Search Gallery sets…"></div><div><button class="btn primary" id="addSet">Add set</button></div></div>
+    <div id="setsTable"></div>
+  </div>
+</section>
+
+<section id="data" class="section">
+  <div class="card panel">
+    <h2>Import / export state</h2>
+    <p class="muted">Import a JSON snapshot containing <code>players</code>, <code>galleries</code>, and optional <code>settings</code>.</p>
+    <div class="actions"><input type="file" id="jsonFile" accept=".json"><button class="btn" id="template">Download template</button><button class="btn danger" id="reset">Reset local data</button></div>
+  </div>
+  <div class="card panel">
+    <h2>FUT.GG set importer</h2>
+    <p class="muted">Paste a FUT.GG Gallery-set URL. The server will try to import set metadata such as slots and grade thresholds.</p>
+    <div class="actions"><input id="futgg" class="wide" placeholder="https://www.fut.gg/fut-gallery/..."><button class="btn primary" id="importFutgg">Import set</button></div>
+    <div class="small muted" id="futggStatus" style="margin-top:9px"></div>
+  </div>
+</section>
+</main>
+</div>
+
+<div class="modalbg" id="modalbg"><div class="modal"><div class="toolbar"><h2 id="modalTitle" style="margin:0"></h2><button class="btn" id="close">Close</button></div><div id="modalBody"></div></div></div>
+
+<script>
+const G=['D','C','B','A','S'];
+const TAG={
+sameNation:[[5,9,.01],[10,19,.02],[20,999,.04]],differentNation:[[5,9,.01],[10,19,.02],[20,999,.04]],
+sameClub:[[5,9,.01],[10,19,.02],[20,999,.04]],differentClub:[[5,9,.01],[10,19,.02],[20,999,.04]],
+sameLeague:[[5,9,.01],[10,19,.02],[20,999,.08]],differentLeague:[[5,9,.01],[10,19,.02],[20,999,.04]],
+bronze:[[5,9,.20],[10,19,.40],[20,999,.80]],silver:[[5,9,.15],[10,19,.30],[20,999,.60]],gold:[[5,9,.01],[10,19,.02],[20,999,.04]],
+holographic:[[2,3,.08],[4,5,.12],[6,999,.20]],icon:[[2,3,.10],[4,5,.15],[6,999,.25]],hero:[[2,3,.08],[4,5,.12],[6,999,.20]],
+totw:[[3,5,.04],[6,9,.08],[10,999,.15]],first:[[5,9,1.5],[10,19,3],[20,999,5]],gk:[[3,5,.03],[6,9,.06],[10,999,.15]],
+multi:[[2,2,.10],[3,3,.15],[4,999,.20]],wf:[[3,4,.03],[5,9,.06],[10,999,.12]],skills:[[3,4,.03],[5,9,.06],[10,999,.12]],
+def:[[5,9,.03],[10,14,.06],[15,999,.10]],mid:[[5,9,.03],[10,14,.06],[15,999,.10]],att:[[5,9,.03],[10,14,.06],[15,999,.10]]
+};
+const blank={settings:{coins:270000,taxRate:.05,objective:'eff',maxBundle:15},players:[],galleries:[]};
+let state=load(),last=[];
+function load(){try{const x=JSON.parse(localStorage.getItem('fc27gallery'));return x&&x.players&&x.galleries?Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})}):structuredClone(blank)}catch{return structuredClone(blank)}}
+function save(){localStorage.setItem('fc27gallery',JSON.stringify(state))}
+const fmt=n=>Number(n||0).toLocaleString(), esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])), uid=(p='id')=>p+'_'+Math.random().toString(36).slice(2,9);
+function pct(rule,n){for(const [a,b,p] of TAG[rule]||[])if(n>=a&&n<=b)return p;return 0}
+function group(items,key,rule){let m={};items.forEach(p=>{if(p[key])(m[p[key]]??=[]).push(p)});let best=0;for(const a of Object.values(m)){let q=pct(rule,a.length);best=Math.max(best,q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0)}return best}
+function distinct(items,key,rule){let m={};items.forEach(p=>{if(p[key]&&(!m[p[key]]||+p.score>+m[p[key]].score))m[p[key]]=p});let a=Object.values(m),q=pct(rule,a.length);return q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0}
+function filt(items,fn,rule){let a=items.filter(fn),q=pct(rule,a.length);return q?Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q):0}
+function score(items){
+ let base=items.reduce((s,p)=>s+(+p.score||0),0),b=[];
+ const add=x=>{if(x>0)b.push(x)};
+ add(group(items,'nation','sameNation'));add(distinct(items,'nation','differentNation'));add(group(items,'club','sameClub'));add(distinct(items,'club','differentClub'));add(group(items,'league','sameLeague'));add(distinct(items,'league','differentLeague'));
+ add(filt(items,p=>p.rarity==='Bronze','bronze'));add(filt(items,p=>p.rarity==='Silver','silver'));add(filt(items,p=>p.rarity==='Gold','gold'));add(filt(items,p=>p.holographic,'holographic'));add(filt(items,p=>p.special==='Icon','icon'));add(filt(items,p=>p.special==='Hero','hero'));add(filt(items,p=>p.special==='TOTW','totw'));add(filt(items,p=>p.firstOwner,'first'));add(filt(items,p=>p.position==='GK','gk'));
+ let mm={};items.forEach(p=>(mm[p.playerKey||p.name]??=[]).push(p));for(const a of Object.values(mm)){let q=pct('multi',a.length);if(q)add(Math.floor(a.reduce((s,p)=>s+(+p.score||0),0)*q))}
+ add(filt(items,p=>+p.weakFoot>=5,'wf'));add(filt(items,p=>+p.skillMoves>=5,'skills'));
+ add(filt(items,p=>['CB','LB','RB'].includes(p.position),'def'));add(filt(items,p=>['CDM','CM','CAM','LM','RM'].includes(p.position),'mid'));add(filt(items,p=>['ST','LW','RW'].includes(p.position),'att'));
+ b.sort((a,b)=>b-a);let bonus=b.slice(0,10).reduce((a,b)=>a+b,0);return {base,bonus,total:base+bonus}
+}
+function eligible(p,g){let e=g.eligibility||{};if(e.gender&&e.gender!=='any'&&p.gender!==e.gender)return false;if(e.type==='club')return (p.club||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='league')return (p.league||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='rarity')return (p.special||p.rarity||'').toLowerCase()===(e.value||'').toLowerCase();if(e.type==='ids')return (e.playerIds||[]).includes(p.id);return (p.sets||[]).includes(g.id)}
+function lineup(pool,n){if(pool.length<=n)return {items:pool,...score(pool)};let cur=pool.slice().sort((a,b)=>b.score-a.score).slice(0,n),cs=score(cur).total;for(let k=0;k<5;k++){let best=null,ids=new Set(cur.map(x=>x.id));for(let i=0;i<n;i++)for(const c of pool)if(!ids.has(c.id)){let t=cur.slice();t[i]=c;let s=score(t).total;if(s>cs&&(!best||s>best.s))best={i,c,s}}if(!best)break;cur[best.i]=best.c;cs=best.s}return {items:cur,...score(cur)}}
+function grade(g,count,s){if(count<g.slots)return null;let z=null;for(const x of G)if(s>=+(g.thresholds?.[x]||Infinity))z=x;return z}
+function tokens(g,gr){if(!gr)return 0;let n=0;for(const x of G){n+=+(g.rewards?.[x]||0);if(x===gr)break}return n}
+function evalG(g,players=state.players){let pool=players.filter(p=>p.collected&&eligible(p,g)),l=lineup(pool,+g.slots||15),gr=grade(g,l.items.length,l.total);return {...l,count:pool.length,grade:gr,tokens:tokens(g,gr),complete:pool.length>=g.slots}}
+function summary(players=state.players){let t=0,s=0,e={};state.galleries.forEach(g=>{let x=evalG(g,players);e[g.id]=x;t+=x.tokens;if(x.complete)s+=x.total});return {tokens:t,score:s,evals:e}}
+function loss(p){let buy=+p.buyPrice||0,res=+p.resalePrice||buy;return Math.max(0,buy-Math.floor(res*(1-state.settings.taxRate)))}
+function opportunity(g){
+ let base=evalG(g),cand=state.players.filter(p=>!p.collected&&eligible(p,g)&&+p.buyPrice>0).sort((a,b)=>loss(a)-loss(b)||b.score-a.score);
+ if(!cand.length)return null;let best=null,max=Math.min(state.settings.maxBundle||15,cand.length);
+ let pool=cand.slice(0,Math.min(22,cand.length));
+ for(let k=1;k<=max;k++){
+   let bundle=pool.slice(0,k),sim=state.players.map(p=>bundle.some(x=>x.id===p.id)?{...p,collected:true}:p),ne=evalG(g,sim),dt=ne.tokens-base.tokens,ds=(ne.complete?ne.total:0)-(base.complete?base.total:0),ls=bundle.reduce((s,p)=>s+loss(p),0),cap=Math.max(...bundle.map(p=>+p.buyPrice||0));
+   let val=state.settings.objective==='tokens'?dt*1e9+ds:state.settings.objective==='score'?ds*1e5+dt*1e6:state.settings.objective==='balanced'?dt*1e7+ds*100-ls*10:(dt/Math.max(1,ls))*1e6+ds/Math.max(1,ls);
+   if(dt>0||ds>0){let o={g,base,ne,bundle,dt,ds,loss:ls,cap,val};if(!best||o.val>best.val)best=o}
+ }
+ return best
+}
+function allOpps(){return state.galleries.map(opportunity).filter(Boolean).filter(o=>o.cap<=state.settings.coins).sort((a,b)=>b.val-a.val)}
+function badge(x){return '<span class="grade '+(x||'')+'">'+(x||'—')+'</span>'}
+function renderOpp(o){return '<div class="opp"><div class="opphead"><div><div class="oppname">'+esc(o.g.name)+' '+(o.base.grade||'—')+' → '+(o.ne.grade||'—')+'</div><div class="small muted">'+o.bundle.length+' purchase'+(o.bundle.length===1?'':'s')+'</div></div><div style="text-align:right"><div class="good" style="font-weight:900">+'+fmt(o.dt)+' tokens</div><div class="small muted">+'+fmt(o.ds)+' score</div></div></div><div class="chips">'+o.bundle.map(p=>'<span class="chip">'+esc(p.name)+' · '+fmt(p.buyPrice)+'</span>').join('')+'</div><div class="metrics"><span>Expected loss <b>'+fmt(o.loss)+'</b></span><span>Capital <b>'+fmt(o.cap)+'</b></span><span>New score <b>'+fmt(o.ne.total)+'</b></span></div></div>'}
+function nextG(g,e){let i=e.grade?G.indexOf(e.grade):-1;for(let j=i+1;j<G.length;j++){let gr=G[j],th=+g.thresholds?.[gr]||0;if(th)return {gr,th,dt:tokens(g,gr)-e.tokens}}return null}
+function render(){
+ save();let s=summary();coinsStat.textContent=fmt(state.settings.coins);collectedStat.textContent=fmt(state.players.filter(p=>p.collected).length);dbStat.textContent=fmt(state.players.length)+' cards in database';tokensStat.textContent=fmt(s.tokens);scoreStat.textContent=fmt(s.score);startBanner.style.display=state.players.length&&state.galleries.length?'none':'block';
+ let arr=state.galleries.map(g=>({g,e:s.evals[g.id]}));arr.sort((a,b)=>{let na=nextG(a.g,a.e),nb=nextG(b.g,b.e);return (na?Math.max(0,na.th-a.e.total):1e20)-(nb?Math.max(0,nb.th-b.e.total):1e20)});
+ closest.innerHTML=arr.slice(0,6).map(({g,e})=>{let n=nextG(g,e);return '<div class="opp"><div class="opphead"><b>'+esc(g.name)+'</b>'+badge(e.grade)+'</div><div class="small muted">'+e.count+'/'+g.slots+' collected · '+fmt(e.total)+' score</div>'+(n?'<div class="small" style="margin-top:7px"><b>'+fmt(Math.max(0,n.th-e.total))+'</b> score to '+n.gr+' · +'+n.dt+' tokens</div>':'<div class="small good" style="margin-top:7px">Max grade</div>')+'</div>'}).join('')||'<div class="empty">No sets yet.</div>';
+ last=allOpps();dashOpps.innerHTML=last.slice(0,5).map(renderOpp).join('')||'<div class="empty">No priced upgrade opportunities yet.</div>';
+ renderSets();renderPlayers();
+ objective.value=state.settings.objective;coins.value=state.settings.coins;tax.value=state.settings.taxRate;bundle.value=state.settings.maxBundle;
+}
+function renderSets(){
+ let q=(setSearch.value||'').toLowerCase(),gs=state.galleries.filter(g=>!q||g.name.toLowerCase().includes(q));
+ let body=gs.map(g=>{let e=evalG(g),n=nextG(g,e);return '<tr><td><b>'+esc(g.name)+'</b><div class="small muted">'+esc(g.eligibility?.type||'')+': '+esc(g.eligibility?.value||'')+'</div></td><td>'+e.count+'/'+g.slots+'</td><td>'+badge(e.grade)+'</td><td>'+fmt(e.total)+'</td><td>'+fmt(e.tokens)+'</td><td>'+(n?n.gr+' · '+fmt(n.th)+' · +'+n.dt:'Maxed')+'</td><td><button class="btn editSet" data-id="'+g.id+'">Edit</button></td></tr>'}).join('');
+ let t=gs.length?'<div class="table"><table><thead><tr><th>Set</th><th>Collected</th><th>Grade</th><th>Score</th><th>Tokens</th><th>Next</th><th></th></tr></thead><tbody>'+body+'</tbody></table></div>':'<div class="empty">No Gallery sets.</div>';setsTable.innerHTML=t;dashSets.innerHTML=t;document.querySelectorAll('.editSet').forEach(b=>b.onclick=()=>setModal(b.dataset.id))
+}
+function renderPlayers(){
+ let q=(playerSearch.value||'').toLowerCase(),ps=state.players.filter(p=>!q||[p.name,p.club,p.league,p.nation].join(' ').toLowerCase().includes(q));
+ players.innerHTML=ps.length?'<div class="table"><table><thead><tr><th>Collected</th><th>Player</th><th>Score</th><th>Club</th><th>Type</th><th>Buy</th><th>Resale</th><th>Loss</th><th></th></tr></thead><tbody>'+ps.map(p=>'<tr><td><input type="checkbox" class="col" data-id="'+p.id+'" '+(p.collected?'checked':'')+'></td><td><b>'+esc(p.name)+'</b><div class="small muted">'+esc(p.position||'')+' · '+esc(p.nation||'')+'</div></td><td>'+fmt(p.score)+'</td><td>'+esc(p.club||'')+'<div class="small muted">'+esc(p.league||'')+'</div></td><td>'+esc(p.special||p.rarity||'')+'</td><td>'+fmt(p.buyPrice)+'</td><td>'+fmt(p.resalePrice)+'</td><td>'+fmt(loss(p))+'</td><td><button class="btn editP" data-id="'+p.id+'">Edit</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching players.</div>';
+ document.querySelectorAll('.col').forEach(c=>c.onchange=()=>{state.players.find(p=>p.id===c.dataset.id).collected=c.checked;render()});document.querySelectorAll('.editP').forEach(b=>b.onclick=()=>playerModal(b.dataset.id))
+}
+function modal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modalbg.classList.add('show')}
+function playerModal(id){
+ let p=state.players.find(x=>x.id===id)||{id:uid('p'),name:'',score:0,buyPrice:0,resalePrice:0,collected:false,firstOwner:false,club:'',league:'',nation:'',rarity:'Silver',special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false};
+ modal(id?'Edit player':'Add player','<div class="formgrid">'+
+ [['Name','name'],['Gallery item score','score'],['Buy price','buyPrice'],['Expected resale','resalePrice'],['Club','club'],['League','league'],['Nation','nation'],['Position','position']].map(([l,k])=>'<div class="field"><label>'+l+'</label><input id="p_'+k+'" value="'+esc(p[k])+'"></div>').join('')+
+ '<div class="field"><label>Rarity</label><select id="p_rarity"><option>Bronze</option><option>Silver</option><option>Gold</option></select></div><div class="field"><label>Special</label><select id="p_special"><option value="">Base</option><option>Hero</option><option>Icon</option><option>TOTW</option></select></div><div class="field"><label>Gender</label><select id="p_gender"><option value="men">Men</option><option value="women">Women</option></select></div><div class="field"><label>Collected</label><input id="p_collected" type="checkbox" '+(p.collected?'checked':'')+'></div><div class="field"><label>First owner</label><input id="p_first" type="checkbox" '+(p.firstOwner?'checked':'')+'></div></div><div style="margin-top:13px"><button class="btn primary" id="saveP">Save</button> '+(id?'<button class="btn danger" id="delP">Delete</button>':'')+'</div>');
+ p_rarity.value=p.rarity||'Silver';p_special.value=p.special||'';p_gender.value=p.gender||'men';
+ saveP.onclick=()=>{let np={...p};['name','club','league','nation','position'].forEach(k=>np[k]=document.getElementById('p_'+k).value);['score','buyPrice','resalePrice'].forEach(k=>np[k]=+document.getElementById('p_'+k).value);np.rarity=p_rarity.value;np.special=p_special.value;np.gender=p_gender.value;np.collected=p_collected.checked;np.firstOwner=p_first.checked;if(id)Object.assign(p,np);else state.players.push(np);modalbg.classList.remove('show');render()};if(id)delP.onclick=()=>{state.players=state.players.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
+}
+function setModal(id){
+ let g=state.galleries.find(x=>x.id===id)||{id:uid('g'),name:'',slots:15,eligibility:{type:'club',value:'',gender:'any'},thresholds:{D:10,C:300,B:500,A:700,S:1000},rewards:{D:0,C:0,B:5,A:8,S:15}};
+ modal(id?'Edit Gallery set':'Add Gallery set','<div class="formgrid"><div class="field"><label>Name</label><input id="g_name" value="'+esc(g.name)+'"></div><div class="field"><label>Slots</label><input id="g_slots" type="number" value="'+g.slots+'"></div><div class="field"><label>Eligibility</label><select id="g_type"><option>club</option><option>league</option><option>rarity</option><option>custom</option></select></div><div class="field"><label>Value</label><input id="g_value" value="'+esc(g.eligibility?.value||'')+'"></div><div class="field"><label>Gender</label><select id="g_gender"><option value="any">Any</option><option value="men">Men</option><option value="women">Women</option></select></div></div><h3>Thresholds / incremental tokens</h3><div class="formgrid">'+G.map(x=>'<div class="field"><label>'+x+' threshold</label><input id="gt_'+x+'" type="number" value="'+(g.thresholds?.[x]||0)+'"></div><div class="field"><label>'+x+' tokens</label><input id="gr_'+x+'" type="number" value="'+(g.rewards?.[x]||0)+'"></div>').join('')+'</div><div style="margin-top:13px"><button class="btn primary" id="saveG">Save</button> '+(id?'<button class="btn danger" id="delG">Delete</button>':'')+'</div>');
+ g_type.value=g.eligibility?.type||'club';g_gender.value=g.eligibility?.gender||'any';
+ saveG.onclick=()=>{let ng={...g,name:g_name.value,slots:+g_slots.value,eligibility:{type:g_type.value,value:g_value.value,gender:g_gender.value},thresholds:{},rewards:{}};G.forEach(x=>{ng.thresholds[x]=+document.getElementById('gt_'+x).value;ng.rewards[x]=+document.getElementById('gr_'+x).value});if(id)Object.assign(g,ng);else state.galleries.push(ng);modalbg.classList.remove('show');render()};if(id)delG.onclick=()=>{state.galleries=state.galleries.filter(x=>x.id!==id);modalbg.classList.remove('show');render()}
+}
+function runOptimizer(){last=allOpps();opps.innerHTML=last.slice(0,40).map(renderOpp).join('')||'<div class="empty">No viable upgrades found.</div>';dashOpps.innerHTML=last.slice(0,5).map(renderOpp).join('')||'<div class="empty">No viable upgrades found.</div>'}
+function download(name,obj){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(obj,null,2)],{type:'application/json'}));a.download=name;a.click()}
+function demoState(){let s=structuredClone(blank),make=(id,name,score,price,c,club,league,rarity='Silver')=>({id,name,score,buyPrice:price,resalePrice:price,collected:c,firstOwner:false,club,league,nation:'Spain',rarity,special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3});for(let i=1;i<=15;i++)s.players.push(make('a'+i,'Athletic Player '+i,i<9?80:180+(i%3)*70,700+i*40,i<9,'Athletic Club','LALIGA EA SPORTS',i>12?'Bronze':'Silver'));s.galleries=[{id:'athletic',name:'Athletic Club',slots:15,eligibility:{type:'club',value:'Athletic Club',gender:'men'},thresholds:{D:10,C:900,B:1600,A:2400,S:3600},rewards:{D:0,C:5,B:10,A:15,S:25}}];return s}
+document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));document.getElementById(b.dataset.section).classList.add('active');title.textContent=b.textContent;subtitle.textContent={dashboard:'Find the cheapest route to more Gallery tokens and score.',optimizer:'Rank bundles by token and score value.',collection:'Track cards that have passed through your club.',sets:'Replicate each Gallery set and its grade thresholds.',data:'Bring your real collection into the optimizer.'}[b.dataset.section]});
+demo.onclick=()=>{state=demoState();render()};export.onclick=()=>download('fc27-gallery-state.json',state);template.onclick=()=>download('fc27-gallery-template.json',blank);reset.onclick=()=>{if(confirm('Reset local data?')){state=structuredClone(blank);render()}};run.onclick=runOptimizer;runTop.onclick=()=>{document.querySelector('[data-section=optimizer]').click();runOptimizer()};addPlayer.onclick=()=>playerModal();addSet.onclick=()=>setModal();close.onclick=()=>modalbg.classList.remove('show');modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove('show')};playerSearch.oninput=renderPlayers;setSearch.oninput=renderSets;
+[objective,coins,tax,bundle].forEach(el=>el.onchange=()=>{state.settings.objective=objective.value;state.settings.coins=+coins.value;state.settings.taxRate=+tax.value;state.settings.maxBundle=+bundle.value;render()});
+jsonFile.onchange=async e=>{let f=e.target.files[0];if(!f)return;try{let x=JSON.parse(await f.text());if(!x.players||!x.galleries)throw Error('Missing players/galleries');state=Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})});render()}catch(err){alert(err.message)}};
+importFutgg.onclick=async()=>{let u=futgg.value.trim();if(!u)return;futggStatus.textContent='Fetching…';try{let r=await fetch('/api/futgg?url='+encodeURIComponent(u));if(!r.ok)throw Error(await r.text());let g=await r.json();let ex=state.galleries.find(x=>x.id===g.id);if(ex)Object.assign(ex,g);else state.galleries.push(g);futggStatus.textContent='Imported. Review under Gallery Sets.';render()}catch(e){futggStatus.textContent='Import failed: '+e.message}};
+render();
+</script>
+</body>
+</html>
