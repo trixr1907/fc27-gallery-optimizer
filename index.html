@@ -68,6 +68,7 @@ input,select,textarea{background:#0b1117;border:1px solid var(--line);color:#fff
       <div class="field"><label>Reserve (kept)</label><input id="reserve" type="number"></div>
       <div class="field"><label>Tax rate</label><input id="tax" type="number" step=".01"></div>
       <div class="field"><label>Max bundle size</label><input id="bundle" type="number" min="1" max="20"></div>
+      <div class="field"><label>Price case</label><select id="priceScenario"><option value="base">Base (nominal)</option><option value="worst">Worst case (conservative)</option><option value="best">Best case (optimistic)</option></select></div>
     </div>
     <div style="margin-top:12px"><button class="btn primary" id="run">Calculate</button></div>
     <div class="small muted" style="margin-top:9px">Plan method: branch &amp; bound over candidate card sets (memoized set evaluation, admissible monotone bound), then a 2-opt refinement, with a coin-budget cap. The plan reports whether it is <b>proven optimal</b> (search exhausted under the bound) or only the <b>best found</b> because the node cap was hit. The <b>global portfolio plan</b> buys each shared card once, charges its cost once, and spends the shared budget <code>coins − reserve</code>; beyond a small universe it runs the same branch &amp; bound over the shared card set, and again reports <b>proven optimal</b> vs <b>best found</b> (node limit).</div>
@@ -96,12 +97,16 @@ input,select,textarea{background:#0b1117;border:1px solid var(--line);color:#fff
 <section id="data" class="section">
   <div class="card panel">
     <h2>Import / export state</h2>
-    <p class="muted">Import a JSON snapshot containing <code>players</code>, <code>galleries</code>, and optional <code>settings</code>.</p>
+    <p class="muted">Import a JSON snapshot containing <code>players</code>, <code>galleries</code>, and optional <code>settings</code>. Older saves are migrated forward automatically (<code>schema v2</code>).</p>
+    <p class="small muted"><b>Prices are dated snapshots.</b> Every buy/resale price is stored with the moment it was read, so a stale price is never mistaken for a current one. Re-enter a price to refresh its snapshot date.</p>
+    <p class="small muted" id="priceStaleNote"></p>
     <div class="actions"><input type="file" id="jsonFile" accept=".json"><button class="btn" id="template">Download template</button><button class="btn danger" id="reset">Reset local data</button></div>
+    <div class="small muted" id="sizeWarn" style="margin-top:9px"></div>
+    <div id="mergePreview" style="margin-top:11px"></div>
   </div>
   <div class="card panel">
     <h2>FUT.GG set importer</h2>
-    <p class="muted">Paste a FUT.GG Gallery-set URL. The server will try to import set metadata such as slots and grade thresholds.</p>
+    <p class="muted">Paste a FUT.GG Gallery-set URL. The server imports set metadata (slots, thresholds, rewards) as a <b>dated snapshot</b>; repeated imports of the same URL are served from a short-lived cache.</p>
     <div class="actions"><input id="futgg" class="wide" placeholder="https://www.fut.gg/fut-gallery/..."><button class="btn primary" id="importFutgg">Import set</button></div>
     <div class="small muted" id="futggStatus" style="margin-top:9px"></div>
   </div>
@@ -166,6 +171,26 @@ function pct(rule, n) {
 function sanScore(x) {
   const v = +x;
   return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+// Price reader (P2). Prices are stored as DATED snapshots ({value, fetchedAt}),
+// but legacy/constructed inputs may be bare numbers. Both shapes must read the
+// same so the engine never sees NaN from a snapshot. Mirrors server.price_value.
+function priceOf(x, scenario) {
+  // Read a price whether it is a bare number or a dated snapshot. An optional
+  // scenario ('best' | 'base' | 'worst') selects a spread value when present and
+  // otherwise falls back to the base value -- so the optimizer can optimise a
+  // conservative (worst-case) or optimistic (best-case) price without any other
+  // code change. A missing/invalid price reads as 0.
+  let v = x;
+  if (x && typeof x === 'object') {
+    if (scenario && scenario !== 'base' && Number.isFinite(+x[scenario])) v = x[scenario];
+    else if (Number.isFinite(+x.value)) v = x.value;
+    else if (Number.isFinite(+x.base)) v = x.base;
+    else v = undefined;
+  }
+  const n = +v;
+  return Number.isFinite(n) ? n : 0;
 }
 
 // Core bonus primitive: floor(sum of matched item scores * pct).
@@ -328,9 +353,12 @@ function tokens(g, gr) {
 }
 
 // Expected permanent coin loss = buy - (1 - tax) * resale, floored, clamped >= 0.
-function loss(p, taxRate) {
-  const buy = +p.buyPrice || 0;
-  const res = +p.resalePrice || buy;
+// Prices may be bare numbers or dated snapshots -- priceOf() normalises both.
+// The optional `scenario` ('best' | 'base' | 'worst') lets the caller price a
+// conservative (worst) or optimistic (best) case; default is the base value.
+function loss(p, taxRate, scenario) {
+  const buy = priceOf(p.buyPrice, scenario);
+  const res = priceOf(p.resalePrice, scenario) || buy;
   return Math.max(0, buy - Math.floor(res * (1 - (taxRate ?? 0.05))));
 }
 
@@ -377,7 +405,7 @@ function candidatesFor(g, players, collectedIds) {
   const byId = new Map();
   for (const p of players) {
     if ((collectedIds && collectedIds.has(p.itemId || p.id)) || p.collected) continue;
-    if (!eligible(p, g) || !(+p.buyPrice > 0)) continue;
+    if (!eligible(p, g) || !(priceOf(p.buyPrice) > 0)) continue;
     const k = p.itemId || p.id, prev = byId.get(k);
     if (!prev || sanScore(p.score) > sanScore(prev.score)) byId.set(k, p);
   }
@@ -474,7 +502,7 @@ function bbValue(g, evalPool, S, opts) {
   const chosenOnly = new Set((opts.ownedIds || []));
   for (const x of S) chosenOnly.add(idOf(x));
   const ev = evalSet(g, evalPool, chosenOnly);
-  const totalLoss = S.reduce((s, p) => s + loss(p, opts.taxRate), 0);
+  const totalLoss = S.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
   const dTokens = tokens(g, ev.grade) - (opts.baseTokens || 0);
   const dScore = ev.score - (opts.baseScore || 0);
   return { value: objectiveValue(opts.objective, dTokens, dScore, totalLoss), loss: totalLoss, dScore, dTokens, score: ev.score };
@@ -499,13 +527,13 @@ function branchAndBound(g, pool, unitsNeeded, cands, seed, opts) {
   const bopts = Object.assign({}, opts, { ownedIds });
   // Explore high-loss candidates first so expensive branches are bounded early.
   const order = cands.slice().sort((a, b) =>
-    (loss(b, opts.taxRate) - loss(a, opts.taxRate)) || (b.score - a.score)
+    (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (b.score - a.score)
     || String(idOf(a)).localeCompare(String(idOf(b))));
   let best = (seed || []).slice();
   // The seed must itself be affordable; otherwise it is not a valid incumbent
   // (B&B would "return" an infeasible set that the caller then has to truncate,
   // losing the optimum). Drop an over-budget seed and start from the empty set.
-  const seedCost = best.reduce((s, c) => s + (+c.buyPrice || 0), 0);
+  const seedCost = best.reduce((s, c) => s + priceOf(c.buyPrice, opts.priceScenario), 0);
   if (seedCost > coins) best = [];
   let bestVal = bbValue(g, evalPool, best, bopts).value;
   let nodes = 0;
@@ -528,7 +556,7 @@ function branchAndBound(g, pool, unitsNeeded, cands, seed, opts) {
       const c = order[i];
       if (baseIdSet.has(idOf(c)) || S.some(x => idOf(x) === idOf(c))) continue;
       const spent = (opts.seedSpend || 0)
-        + S.reduce((s, p) => s + (+p.buyPrice || 0), 0) + (+c.buyPrice || 0);
+        + S.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0) + priceOf(c.buyPrice, opts.priceScenario);
       if (spent > coins) continue; // hard coin-budget constraint
       const S2 = S.concat([c]);
       const v = bbValue(g, evalPool, S2, bopts).value;
@@ -579,14 +607,14 @@ function improve2opt(sel, pool, cands, g, opts) {
     const ev = evalSet(g, universe, ids);
     const dTokens = tokens(g, ev.grade) - baseTokens;
     const dScore = ev.score - baseScore;
-    const dLoss = list.reduce((s, p) => s + loss(p, opts.taxRate), 0);
+    const dLoss = list.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
     return objectiveValue(opts.objective, dTokens, dScore, dLoss);
   };
   // Coin budget: an edit that pushes spend above `opts.coins` is NOT a valid
   // improvement (B&B only ever returns affordable sets, so refinement must not
   // silently make the plan infeasible).
   const coins = +opts.coins != null ? +opts.coins : Infinity;
-  const spendOf = list => list.reduce((s, p) => s + (+p.buyPrice || 0), 0);
+  const spendOf = list => list.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0);
   let cur = sel.slice(), curVal = valOf(cur);
   for (let pass = 0; pass < 4; pass++) {
     let best = null, bestVal = curVal;
@@ -621,9 +649,14 @@ function planSet(g, players, opts) {
   opts = opts || {};
   const objective = opts.objective || 'eff';
   const taxRate = opts.taxRate;
+  // Price scenario: 'base' (default) | 'best' | 'worst'. Determines which price
+  // spread value is used for every cost/budget decision in this plan.
+  const scenario = opts.priceScenario || 'base';
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const collectedIds = opts.collectedIds;
+  // All cost decisions in this plan read the ACTIVE price scenario.
+  const buyOf = (x) => priceOf(x.buyPrice, scenario);
   const pool = poolFor(g, players, collectedIds);
   const n = +g.slots || 15;
   const base = { items: pool.slice(0, n), ...score(pool), count: pool.length };
@@ -632,7 +665,7 @@ function planSet(g, players, opts) {
   const cands = candidatesFor(g, players, collectedIds);
   // units = unpriced eligible items, used to fill slots before buying anything.
   const units = players.filter(p => !((collectedIds && collectedIds.has(p.itemId || p.id)) || p.collected)
-    && eligible(p, g) && !(+p.buyPrice > 0));
+    && eligible(p, g) && !(priceOf(p.buyPrice, scenario) > 0));
   const slotsFree = Math.max(0, n - pool.length);
   const unitsNeeded = units.slice(0, slotsFree);
   const virtualCount = pool.length + unitsNeeded.length;
@@ -648,12 +681,12 @@ function planSet(g, players, opts) {
     let best = null, bestGain = -1;
     for (const c of candsSorted) {
       if (sel.some(s => (s.itemId || s.id) === (c.itemId || c.id))) continue;
-      if (seedSpend + (+c.buyPrice || 0) > coins) continue;
+      if (seedSpend + buyOf(c) > coins) continue;
       const gv = gain1(g, seedItems.concat(sel), c);
       if (gv > bestGain || best === null) { bestGain = gv; best = c; }
     }
     if (!best) break;
-    sel.push(best); seedSpend += (+best.buyPrice || 0);
+    sel.push(best); seedSpend += buyOf(best);
   }
   // --- R3: Branch & Bound over candidate sets S --------------------------------
   // Primary search path: `branchAndBound` explores the space of priced card
@@ -664,7 +697,7 @@ function planSet(g, players, opts) {
   // The admissible bound is `setUpperBound` (NOT evalSet over the whole pool --
   // `lineup()` is heuristic and not monotone, see the note above).
   const bbOpts = {
-    objective, taxRate, baseTokens, baseScore, maxBundle, coins,
+    objective, taxRate, priceScenario: scenario, baseTokens, baseScore, maxBundle, coins,
     seedSpend: 0, maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
   };
   const bb = branchAndBound(g, pool.concat(unitsNeeded), [], cands, sel, bbOpts);
@@ -678,14 +711,14 @@ function planSet(g, players, opts) {
   const shortage = n - virtualCount - sel.length;
   if (shortage > 0) {
     const usedIds = new Set([...pool, ...unitsNeeded, ...sel].map(x => x.itemId || x.id));
-    const fpool = cands.filter(c => !usedIds.has(c.itemId || c.id) && (+c.buyPrice || 0) <= coins - spendTotal(sel))
-      .sort((a, b) => (+a.buyPrice || 0) - (+b.buyPrice || 0) || (b.score - a.score));
-    let acc = spendTotal(sel), picks = [];
-    for (const c of fpool) { if (acc + (+c.buyPrice || 0) <= coins) { picks.push(c); acc += (+c.buyPrice || 0); } }
+    const fpool = cands.filter(c => !usedIds.has(c.itemId || c.id) && buyOf(c) <= coins - spendTotal(sel, scenario))
+      .sort((a, b) => buyOf(a) - buyOf(b) || (b.score - a.score));
+    let acc = spendTotal(sel, scenario), picks = [];
+    for (const c of fpool) { if (acc + buyOf(c) <= coins) { picks.push(c); acc += buyOf(c); } }
     filler = picks;
   }
   // 2-opt refinement against the real objective (upgrades only; fillers are slot fillers).
-  sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, { objective, taxRate, baseTokens, baseScore, coins });
+  sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, { objective, taxRate, priceScenario: scenario, baseTokens, baseScore, coins });
   const chosen = sel.slice().sort((a, b) => (b.score - a.score) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id)));
   const fillers = filler || [];
   const recs = unitsNeeded.concat(fillers).concat(chosen);
@@ -699,10 +732,10 @@ function planSet(g, players, opts) {
   const newGrade = newEval.grade;
   const dTokens = tokens(g, newGrade) - baseTokens;
   const dScore = buyScore - baseScore;
-  const dLoss = chosen.concat(fillers).reduce((s, p) => s + loss(p, taxRate), 0);
-  const feasible = spendTotal(chosen.concat(fillers)) <= coins;
+  const dLoss = chosen.concat(fillers).reduce((s, p) => s + loss(p, taxRate, scenario), 0);
+  const feasible = spendTotal(chosen.concat(fillers), scenario) <= coins;
   const recsSorted = recs.slice().sort((a, b) => {
-    const uc = (x) => (+x.buyPrice > 0 ? 1 : 0); // units first (they are free)
+    const uc = (x) => (buyOf(x) > 0 ? 1 : 0); // units first (they are free)
     return (uc(a) - uc(b)) || ((+b.score || 0) - (+a.score || 0)) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id));
   });
   return {
@@ -722,7 +755,7 @@ function planSet(g, players, opts) {
     optimality, nodes: bb.nodes
   };
 }
-function spendTotal(items) { return items.reduce((s, p) => s + (+p.buyPrice || 0), 0); }
+function spendTotal(items, scenario) { return items.reduce((s, p) => s + priceOf(p.buyPrice, scenario), 0); }
 
 // ---- R3: portfolio optimisation across several sets --------------------------
 // Buying ONE card can improve SEVERAL sets at once, so its coin loss must count
@@ -785,7 +818,7 @@ function portfolioValue(galleries, pools, prices, S, opts) {
     dTokens += dt; dScore += ds;
     value += objectiveValue(opts.objective, dt, ds, 0);
   }
-  const totalCost = S.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const totalCost = S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   return { value, cost: totalCost, dTokens, dScore };
 }
 // Brute-force reference (used by tests; kept simple so it is obviously correct).
@@ -799,7 +832,7 @@ function portfolioBrute(galleries, players, opts) {
   const w = portfolioWorld(galleries, players, opts);
   const idOf = x => x.itemId || x.id;
   const budget = Math.max(0, (+opts.coins != null ? +opts.coins : Infinity) - (+opts.reserve || 0));
-  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, budget, bases: w.bases };
+  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: w.bases };
   let best = [], bestVal = -Infinity, bestCost = 0;
   const cands = w.cands, n = Math.min(cands.length, Math.max(1, +opts.maxBundle || 15));
   if (cands.length > 30) throw new Error('portfolioBrute: candidate universe too large (' + cands.length + ')');
@@ -848,20 +881,20 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
   const budget = opts.budget;
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
   const maxNodes = +opts.maxNodes > 0 ? +opts.maxNodes : 200000;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget, bases: opts.bases };
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
   const ubVal = portfolioUpperBound(galleries, pools, prices, vopts);
   // Deterministic order: expensive cards first (bounded early), then by score desc.
   const order = cands.slice().sort((a, b) =>
-    (loss(b, opts.taxRate) - loss(a, opts.taxRate)) || (sanScore(b.score) - sanScore(a.score))
+    (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (sanScore(b.score) - sanScore(a.score))
     || String(idOf(a)).localeCompare(String(idOf(b))));
   // Seed must itself be affordable, else discard it (B&B returns feasible sets).
   let best = (seed || []).slice();
-  const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   if (seedCost > budget) best = [];
   let bestVal = portfolioValue(galleries, pools, prices, best, vopts).value;
-  let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   let nodes = 0, aborted = false;
-  const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   const rec = (idx, S) => {
     if (aborted) return;
     if (++nodes > maxNodes) { aborted = true; return; }
@@ -872,7 +905,7 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
     for (let i = idx; i < order.length; i++) {
       const c = order[i];
       if (S.some(x => idOf(x) === idOf(c))) continue;
-      if (partialCost(S) + loss(c, opts.taxRate) > budget) continue; // hard budget
+      if (partialCost(S) + loss(c, opts.taxRate, opts.priceScenario) > budget) continue; // hard budget
       const S2 = S.concat([c]);
       const r = portfolioValue(galleries, pools, prices, S2, vopts);
       if (r.value > bestVal || (r.value === bestVal && r.cost < bestCost)) {
@@ -890,8 +923,8 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
 function portfolioImprove2opt(galleries, pools, prices, cands, sel, opts) {
   const idOf = x => x.itemId || x.id;
   const budget = opts.budget;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget, bases: opts.bases };
-  const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
+  const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   const valOf = list => portfolioValue(galleries, pools, prices, list, vopts).value;
   let cur = sel.slice(), curVal = valOf(cur);
   for (let pass = 0; pass < 4; pass++) {
@@ -918,7 +951,7 @@ function portfolioImprove2opt(galleries, pools, prices, cands, sel, opts) {
 // Deterministic greedy marginal seed over the shared candidate universe (cost
 // charged once). Used ONLY as a B&B seed, so it is also itself a feasible plan.
 function portfolioGreedySeed(galleries, pools, prices, cands, opts) {
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget: opts.budget, bases: opts.bases };
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget: opts.budget, bases: opts.bases };
   let selected = [], selVal = portfolioValue(galleries, pools, prices, selected, vopts).value;
   const usedIds = new Set();
   for (let k = 0; k < Math.max(1, +opts.maxBundle || 15); k++) {
@@ -952,6 +985,8 @@ function portfolioPlan(galleries, players, opts) {
   opts = opts || {};
   const objective = opts.objective || 'eff';
   const taxRate = opts.taxRate;
+  // Active price scenario, propagated to every per-set / portfolio sub-call.
+  const priceScenario = opts.priceScenario || 'base';
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const reserve = +opts.reserve || 0;
   const budget = Math.max(0, coins - reserve);
@@ -959,7 +994,7 @@ function portfolioPlan(galleries, players, opts) {
 
   const w = portfolioWorld(galleries, players, opts);
   const gs = w.gs, pools = w.pools, prices = w.prices, cands = w.cands;
-  const vopts = { objective, taxRate, budget, bases: w.bases };
+  const vopts = { objective, taxRate, priceScenario, budget, bases: w.bases };
 
   // Per-set detail rows for a chosen id list (shared by every regime).
   const detailFor = chosenIds => gs.map((g, i) => {
@@ -996,13 +1031,13 @@ function portfolioPlan(galleries, players, opts) {
   }
 
   // ---- Global B&B over the shared set S (the R3 portfolio path, larger pools).
-  const seed = portfolioGreedySeed(gs, pools, prices, cands, { objective, taxRate, budget, maxBundle, bases: w.bases });
+  const seed = portfolioGreedySeed(gs, pools, prices, cands, { objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases });
   const bb = portfolioBranchAndBound(gs, pools, prices, cands, seed, {
-    objective, taxRate, budget, maxBundle, bases: w.bases,
+    objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases,
     maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
   });
   // 2-opt refinement (budget-respecting): keep it only if it raises value.
-  const refined = portfolioImprove2opt(gs, pools, prices, cands, bb.best, { objective, taxRate, budget, bases: w.bases });
+  const refined = portfolioImprove2opt(gs, pools, prices, cands, bb.best, { objective, taxRate, priceScenario, budget, bases: w.bases });
   const refinedVal = portfolioValue(gs, pools, prices, refined, vopts).value;
   const chosenSel = refinedVal >= bb.value ? refined : bb.best;
   const chosenIds = chosenSel.map(x => x.itemId || x.id).sort();
@@ -1022,20 +1057,77 @@ const EXACT_PORTFOLIO_LIMIT = EXACT_PF_LIMIT;
 // Plan every set and rank. `plans` is a deterministic best-first list.
 function plan(galleries, players, opts) {
   opts = opts || {};
-  const p = (galleries || []).map(g => planSet(g, players, opts));
+  const priceScenario = opts.priceScenario || 'base';
+  const p = (galleries || []).map(g => planSet(g, players, Object.assign({}, opts, { priceScenario })));
   const ranked = p.slice().sort((a, b) => (b.value - a.value)
     || (b.dTokens - a.dTokens) || (b.dScore - a.dScore) || String(a.set).localeCompare(String(b.set)));
   const portfolio = portfolioPlan(galleries, players, opts);
   return { plans: ranked, all: p, portfolio };
 }
 // ===== ENGINE END =====
-if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };
-const blank={settings:{coins:270000,reserve:0,taxRate:.05,objective:'eff',maxBundle:15},players:[],galleries:[]};
+if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, priceOf, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };
+// ---- State schema + dated snapshots (P2, UI side) -------------------------
+// Mirrors server.py: prices are DATED snapshots, never timeless numbers, and a
+// saved state is migrated forward. The engine block above stays state-free.
+const SCHEMA_VERSION=2;
+// Storage: the key is VERSIONED so a schema bump can never silently clobber an
+// older payload. On first load of the versioned key we copy the legacy payload
+// to a backup key (.v0.bak) before migrating -- a recoverable, one-time step.
+const STORE_KEY='fc27gallery.v'+SCHEMA_VERSION;
+const LEGACY_KEY='fc27gallery';
+const BACKUP_KEY='fc27gallery.v0.bak';
+const SIZE_WARN_BYTES=4*1024*1024;   // warn (not block) as we approach 4 MB
+function priceSnapshot(v,fetchedAt){if(v&&typeof v==='object'){const s={...v};if(!s.priceUpdatedAt)s.priceUpdatedAt=fetchedAt||s.fetchedAt||new Date().toISOString();if(!s.fetchedAt)s.fetchedAt=s.priceUpdatedAt;if(s.best===undefined)s.best=s.value;if(s.worst===undefined)s.worst=s.value;return s}if(v==null||v==='')return null;const n=+v;if(!Number.isFinite(n))return null;const t=fetchedAt||new Date().toISOString();return {value:n,best:n,worst:n,priceUpdatedAt:t,fetchedAt:t}}
+function priceValue(v){return v&&typeof v==='object'?(v.value??null):(v??null)}
+// Price scenario resolution + staleness (mirrors server.py scenario_value/price_stale).
+function scenarioOf(v,scenario){if(v&&typeof v==='object'){if(scenario&&scenario!=='base'&&Number.isFinite(+v[scenario]))return +v[scenario];if(Number.isFinite(+v.value))return +v.value;if(Number.isFinite(+v.base))return +v.base;return null}return v==null?null:(Number.isFinite(+v)?+v:null)}
+function priceUpdatedAt(v){return (v&&typeof v==='object')?(v.priceUpdatedAt||v.fetchedAt||null):null}
+const PRICE_MAX_AGE_MS=30*24*3600*1000;
+function priceStale(v,now){const t=priceUpdatedAt(v);if(!t)return false;const when=Date.parse(t);if(!Number.isFinite(when))return false;const ref=now?Date.parse(now):Date.now();return (ref-when)>PRICE_MAX_AGE_MS}
+function migrateState(st){const s=st&&typeof st==='object'?st:structuredClone(blank);const v=+s.schemaVersion||1;if(v>SCHEMA_VERSION)throw Error('Saved data uses schema v'+v+', newer than this app (v'+SCHEMA_VERSION+').');const now=new Date().toISOString();(s.players||[]).forEach(p=>{['buyPrice','resalePrice'].forEach(k=>{if(k in p)p[k]=priceSnapshot(p[k],now)});if('priceFetchedAt' in p===false&&('buyPrice' in p||'resalePrice' in p))p.priceFetchedAt=now});(s.galleries||[]).forEach(g=>{if(g.sourceUrl&&!g.fetchedAt)g.fetchedAt=now});s.schemaVersion=SCHEMA_VERSION;return s}
+const blank={schemaVersion:SCHEMA_VERSION,settings:{coins:270000,reserve:0,taxRate:.05,objective:'eff',maxBundle:15,priceScenario:'base'},players:[],galleries:[]};
+// One-time, recoverable legacy migration: back up the old payload, then read the
+// versioned key. `storage` defaults to localStorage but is injectable for tests.
+function loadFrom(storage){storage=storage||localStorage;try{
+ let raw=storage.getItem(STORE_KEY);
+ if(raw===null&&storage.getItem(LEGACY_KEY)!==null){
+   // Preserve the pre-versioned payload under the backup key before migrating.
+   try{storage.setItem(BACKUP_KEY,storage.getItem(LEGACY_KEY))}catch{}
+   raw=storage.getItem(LEGACY_KEY);
+ }
+ const x=JSON.parse(raw);if(!(x&&x.players&&x.galleries))return {state:structuredClone(blank),backedUp:false};
+ const migrated=migrateState(x);
+ return {state:Object.assign(structuredClone(blank),migrated,{settings:Object.assign({},blank.settings,migrated.settings||{})}),backedUp:storage.getItem(BACKUP_KEY)!==null};
+ }catch{return {state:structuredClone(blank),backedUp:false}}}
 let state=load(),last=[];
-function load(){try{const x=JSON.parse(localStorage.getItem('fc27gallery'));return x&&x.players&&x.galleries?Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})}):structuredClone(blank)}catch{return structuredClone(blank)}}
-function save(){localStorage.setItem('fc27gallery',JSON.stringify(state))}
+function load(){return loadFrom(localStorage).state}
+// Returns {bytes, warn} so the caller can surface a size warning near 4 MB.
+function serializedSize(st,tax){const s=JSON.stringify(st||state);return {bytes:s.length,warn:s.length>=SIZE_WARN_BYTES}}
+function saveTo(storage,st){storage=storage||localStorage;const {bytes,warn}=serializedSize(st);try{storage.setItem(STORE_KEY,JSON.stringify(st||state))}catch(e){return {ok:false,warn:true,bytes,error:String(e&&e.message||e)}}return {ok:true,warn,bytes}}
+function save(){const r=saveTo(localStorage,state);try{sizeWarning(r)}catch{}return r}
+// Import MERGE preview (mirrors server.merge_state): pure diff + provenance +
+// manual-guard, so nothing the user edited is silently overwritten.
+const MERGE_VERIFIED=['fut.gg','ea','oracle'];
+const MANUAL_GUARD_FIELDS=['buyPrice','resalePrice','score','itemId'];
+function mergePreview(current,incoming,source){
+ const cur=current||{},inc=incoming||{};
+ const preview={players:[],galleries:[],summary:{}};
+ const prov=rec=>(rec&&(rec.slotsEstimated||rec.estimated))?'estimated':(MERGE_VERIFIED.indexOf(source)>=0?'verified':'estimated');
+ const diff=(o,n)=>{const ch=[];Object.keys(n||{}).forEach(k=>{if(k==='id'||k==='schemaVersion')return;if((o?o[k]:undefined)!==n[k])ch.push({field:k,old:o?o[k]:undefined,new:n[k],manualGuard:MANUAL_GUARD_FIELDS.indexOf(k)>=0&&(o&&o[k]!=null&&o[k]!==''&&o[k]!==0)})});return ch};
+ ['players','galleries'].forEach(kind=>{
+   const idx={};(cur[kind]||[]).forEach(r=>idx[String(r.id)]=r);
+   (inc[kind]||[]).forEach(n=>{const id=String(n.id);const o=idx[id];const p=prov(n);
+     if(!o)preview[kind].push({id,status:'added',provenance:p,changes:[],needsConfirmation:false});
+     else{const changes=diff(o,n);preview[kind].push({id,status:changes.length?'changed':'unchanged',provenance:p,changes,needsConfirmation:changes.some(c=>c.manualGuard)})}});
+ });
+ const sum={};
+ ['players','galleries'].forEach(kind=>{sum[kind+'Added']=preview[kind].filter(e=>e.status==='added').length;sum[kind+'Changed']=preview[kind].filter(e=>e.status==='changed').length;sum[kind+'Unchanged']=preview[kind].filter(e=>e.status==='unchanged').length});
+ sum.estimated=preview.players.concat(preview.galleries).filter(e=>e.provenance==='estimated').length;
+ sum.needsConfirmation=preview.players.concat(preview.galleries).some(e=>e.needsConfirmation);
+ sum.source=source;preview.summary=sum;return preview;
+}
 // UI-side convenience wrappers: bind the pure engine to the current app state.
-const loss0=p=>loss(p,state.settings.taxRate);
+const loss0=p=>loss(p,state.settings.taxRate,state.settings.priceScenario);
 const evalG0=g=>evalG(g,state.players);
 const summary0=()=>summary(state.galleries,state.players);
 const fmt=n=>Number(n||0).toLocaleString(), esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])), uid=(p='id')=>p+'_'+Math.random().toString(36).slice(2,9);
@@ -1043,13 +1135,13 @@ const fmt=n=>Number(n||0).toLocaleString(), esc=s=>String(s??'').replace(/[&<>"'
 // cleared per run so a fresh user action always sees current prices/collection.
 function plan0(g){
  evalMemoReset();
- return planSet(g,state.players,{objective:state.settings.objective,taxRate:state.settings.taxRate,maxBundle:state.settings.maxBundle,coins:state.settings.coins,reserve:state.settings.reserve});
+ return planSet(g,state.players,{objective:state.settings.objective,taxRate:state.settings.taxRate,maxBundle:state.settings.maxBundle,coins:state.settings.coins,reserve:state.settings.reserve,priceScenario:state.settings.priceScenario});
 }
 // Render shape: keep the previous opportunity() contract for renderOpp.
 function toOpp(p){
  const byId=new Map(state.players.map(x=>[x.itemId||x.id,x]));
  const picks=p.recommendations.map(id=>byId.get(id)).filter(Boolean);
- const cap=picks.reduce((m,x)=>Math.max(m,+x.buyPrice||0),0);
+ const cap=picks.reduce((m,x)=>Math.max(m,priceOf(x.buyPrice)),0);
  return {g:{id:p.set,name:p.name},base:{grade:p.base.grade,complete:p.base.count>=p.slots},ne:{grade:p.newGrade,total:p.buyScore},bundle:picks,dt:p.dTokens,ds:p.dScore,loss:p.loss,cap,val:p.value,completeAfter:p.completeAfter,slots:p.slots,owners:p.owners};
 }
 function allOpps(){return state.galleries.map(plan0).map(toOpp).filter(o=>(o.dt>0||o.ds>0)).filter(o=>o.cap<=state.settings.coins).sort((a,b)=>b.val-a.val)}
@@ -1059,17 +1151,17 @@ function allOpps(){return state.galleries.map(plan0).map(toOpp).filter(o=>(o.dt>
 // engine reports `optimality`: 'proved' when the search (exhaustive for tiny
 // universes, else the global Branch & Bound over S) was exhausted under the
 // bound, or 'node_limit' when the maxNodes cap tripped (= best found, not proven).
-function portfolio0(){evalMemoReset();return portfolioPlan(state.galleries,state.players,{objective:state.settings.objective,taxRate:state.settings.taxRate,coins:state.settings.coins,reserve:state.settings.reserve,maxBundle:state.settings.maxBundle})}
+function portfolio0(){evalMemoReset();return portfolioPlan(state.galleries,state.players,{objective:state.settings.objective,taxRate:state.settings.taxRate,coins:state.settings.coins,reserve:state.settings.reserve,maxBundle:state.settings.maxBundle,priceScenario:state.settings.priceScenario})}
 function renderPortfolio(){
  const p=portfolio0(),byId=new Map(state.players.map(x=>[x.itemId||x.id,x]));
  if(!state.galleries.length||!p.chosen.length&&!(p.dTokens>0||p.dScore>0)){portfolio.innerHTML='<div class="empty">No shared upgrades found — every set is already at its best affordable grade.</div>';return}
  const opt=p.optimality==='proved'?'proven optimal':'best found (node limit reached, not proven)';
- const cards=p.chosen.map(id=>{const c=byId.get(id);return c?'<span class="chip">'+esc(c.name)+' · '+fmt(c.buyPrice)+'</span>':''}).join('')||'<span class="muted small">nothing to buy</span>';
+ const cards=p.chosen.map(id=>{const c=byId.get(id);return c?'<span class="chip">'+esc(c.name)+' · '+fmt(priceOf(c.buyPrice))+'</span>':''}).join('')||'<span class="muted small">nothing to buy</span>';
  const rows=p.detail.map(d=>{const g=state.galleries.find(x=>x.id===d.set);return '<tr><td>'+esc(g?g.name:d.set)+'</td><td>'+(d.newGrade||'—')+'</td><td class="good">+'+(d.dTokens>0?'':'')+fmt(d.dTokens)+'</td><td>'+fmt(d.dScore)+'</td></tr>'}).join('');
  portfolio.innerHTML='<div class="opp"><div class="opphead"><div><div class="oppname">Buy these '+p.chosen.length+' card'+(p.chosen.length===1?'':'s')+' once</div><div class="small muted">Objective: '+esc(p.objective)+' · search: '+esc(opt)+' · universe '+p.universe+' cards</div></div><div style="text-align:right"><div class="good" style="font-weight:900">+'+fmt(p.dTokens)+' tokens</div><div class="small muted">+'+fmt(p.dScore)+' score</div></div></div><div class="chips">'+cards+'</div><div class="metrics"><span>Shared cost <b>'+fmt(p.cost)+'</b></span><span>Budget (coins − reserve) <b>'+fmt(p.budget)+'</b></span><span>Feasible <b>'+(p.feasible?'yes':'no')+'</b></span></div></div>'+(rows?'<div class="table" style="margin-top:9px"><table><thead><tr><th>Set</th><th>New grade</th><th>Δ tokens</th><th>Δ score</th></tr></thead><tbody>'+rows+'</tbody></table></div>':'');
 }
 function badge(x){return '<span class="grade '+(x||'')+'">'+(x||'—')+'</span>'}
-function renderOpp(o){return '<div class="opp"><div class="opphead"><div><div class="oppname">'+esc(o.g.name)+' '+(o.base.grade||'—')+' → '+(o.ne.grade||'—')+'</div><div class="small muted">'+o.bundle.length+' purchase'+(o.bundle.length===1?'':'s')+(o.completeAfter?'':' · still '+o.owners+'/'+o.slots+' after')+'</div></div><div style="text-align:right"><div class="good" style="font-weight:900">+'+fmt(o.dt)+' tokens</div><div class="small muted">+'+fmt(o.ds)+' score</div></div></div><div class="chips">'+o.bundle.map(p=>'<span class="chip">'+esc(p.name)+' · '+fmt(p.buyPrice)+'</span>').join('')+'</div><div class="metrics"><span>Expected loss <b>'+fmt(o.loss)+'</b></span><span>Capital <b>'+fmt(o.cap)+'</b></span><span>New score <b>'+fmt(o.ne.total)+'</b></span></div></div>'}
+function renderOpp(o){return '<div class="opp"><div class="opphead"><div><div class="oppname">'+esc(o.g.name)+' '+(o.base.grade||'—')+' → '+(o.ne.grade||'—')+'</div><div class="small muted">'+o.bundle.length+' purchase'+(o.bundle.length===1?'':'s')+(o.completeAfter?'':' · still '+o.owners+'/'+o.slots+' after')+'</div></div><div style="text-align:right"><div class="good" style="font-weight:900">+'+fmt(o.dt)+' tokens</div><div class="small muted">+'+fmt(o.ds)+' score</div></div></div><div class="chips">'+o.bundle.map(p=>'<span class="chip">'+esc(p.name)+' · '+fmt(priceOf(p.buyPrice))+'</span>').join('')+'</div><div class="metrics"><span>Expected loss <b>'+fmt(o.loss)+'</b></span><span>Capital <b>'+fmt(o.cap)+'</b></span><span>New score <b>'+fmt(o.ne.total)+'</b></span></div></div>'}
 function nextG(g,e){let i=e.grade?G.indexOf(e.grade):-1;for(let j=i+1;j<G.length;j++){let gr=G[j],th=+g.thresholds?.[gr]||0;if(th)return {gr,th,dt:tokens(g,gr)-e.tokens}}return null}
 function render(){
  save();let s=summary0();coinsStat.textContent=fmt(state.settings.coins);collectedStat.textContent=fmt(state.players.filter(p=>p.collected).length);dbStat.textContent=fmt(state.players.length)+' cards in database';tokensStat.textContent=fmt(s.tokens);scoreStat.textContent=fmt(s.score);startBanner.style.display=state.players.length&&state.galleries.length?'none':'block';
@@ -1078,7 +1170,8 @@ function render(){
  last=allOpps();dashOpps.innerHTML=last.slice(0,5).map(renderOpp).join('')||'<div class="empty">No priced upgrade opportunities yet.</div>';
  try{renderPortfolio()}catch(e){portfolio.innerHTML='<div class="empty">Portfolio plan unavailable: '+esc(e.message)+'</div>'}
  renderSets();renderPlayers();
- objective.value=state.settings.objective;coins.value=state.settings.coins;reserve.value=state.settings.reserve;tax.value=state.settings.taxRate;bundle.value=state.settings.maxBundle;
+ objective.value=state.settings.objective;coins.value=state.settings.coins;reserve.value=state.settings.reserve;tax.value=state.settings.taxRate;bundle.value=state.settings.maxBundle;priceScenario.value=state.settings.priceScenario||'base';
+ try{staleNote()}catch{};try{sizeWarning(serializedSize(state))}catch{}
 }
 function renderSets(){
  let q=(setSearch.value||'').toLowerCase(),gs=state.galleries.filter(g=>!q||g.name.toLowerCase().includes(q));
@@ -1087,17 +1180,17 @@ function renderSets(){
 }
 function renderPlayers(){
  let q=(playerSearch.value||'').toLowerCase(),ps=state.players.filter(p=>!q||[p.name,p.club,p.league,p.nation].join(' ').toLowerCase().includes(q));
- players.innerHTML=ps.length?'<div class="table"><table><thead><tr><th>Collected</th><th>Player</th><th>Score</th><th>Club</th><th>Type</th><th>Buy</th><th>Resale</th><th>Loss</th><th></th></tr></thead><tbody>'+ps.map(p=>'<tr><td><input type="checkbox" class="col" data-id="'+p.id+'" '+(p.collected?'checked':'')+'></td><td><b>'+esc(p.name)+'</b><div class="small muted">'+esc(p.position||'')+' · '+esc(p.nation||'')+'</div></td><td>'+fmt(p.score)+'</td><td>'+esc(p.club||'')+'<div class="small muted">'+esc(p.league||'')+'</div></td><td>'+esc(p.special||p.rarity||'')+'</td><td>'+fmt(p.buyPrice)+'</td><td>'+fmt(p.resalePrice)+'</td><td>'+fmt(loss0(p))+'</td><td><button class="btn editP" data-id="'+p.id+'">Edit</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching players.</div>';
+ players.innerHTML=ps.length?'<div class="table"><table><thead><tr><th>Collected</th><th>Player</th><th>Score</th><th>Club</th><th>Type</th><th>Buy</th><th>Resale</th><th>Loss</th><th></th></tr></thead><tbody>'+ps.map(p=>'<tr><td><input type="checkbox" class="col" data-id="'+p.id+'" '+(p.collected?'checked':'')+'></td><td><b>'+esc(p.name)+'</b><div class="small muted">'+esc(p.position||'')+' · '+esc(p.nation||'')+'</div></td><td>'+fmt(p.score)+'</td><td>'+esc(p.club||'')+'<div class="small muted">'+esc(p.league||'')+'</div></td><td>'+esc(p.special||p.rarity||'')+'</td><td>'+fmt(priceOf(p.buyPrice))+'</td><td>'+fmt(priceOf(p.resalePrice))+'</td><td>'+fmt(loss0(p))+'</td><td><button class="btn editP" data-id="'+p.id+'">Edit</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No matching players.</div>';
  document.querySelectorAll('.col').forEach(c=>c.onchange=()=>{state.players.find(p=>p.id===c.dataset.id).collected=c.checked;render()});document.querySelectorAll('.editP').forEach(b=>b.onclick=()=>playerModal(b.dataset.id))
 }
 function modal(title,body){modalTitle.textContent=title;modalBody.innerHTML=body;modalbg.classList.add('show')}
 function playerModal(id){
  let p=state.players.find(x=>x.id===id)||{id:uid('p'),itemId:'',playerKey:'',name:'',score:0,buyPrice:0,resalePrice:0,collected:false,firstOwner:false,club:'',league:'',nation:'',rarity:'Silver',special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false,sets:''};
  modal(id?'Edit player':'Add player','<div class="formgrid">'+
- [['Name','name'],['Gallery item score','score'],['Buy price','buyPrice'],['Expected resale','resalePrice'],['Club','club'],['League','league'],['Nation','nation'],['Position','position'],['Item ID (card identity)','itemId'],['Player identity / linked group','playerKey'],['Weak foot (1-5)','weakFoot'],['Skill moves (1-5)','skillMoves'],['Custom set ids (comma separated)','sets']].map(([l,k])=>'<div class="field"><label>'+l+'</label><input id="p_'+k+'" value="'+esc(Array.isArray(p[k])?p[k].join(','):(p[k]??''))+'"></div>').join('')+
+ [['Name','name'],['Gallery item score','score'],['Buy price','buyPrice'],['Expected resale','resalePrice'],['Club','club'],['League','league'],['Nation','nation'],['Position','position'],['Item ID (card identity)','itemId'],['Player identity / linked group','playerKey'],['Weak foot (1-5)','weakFoot'],['Skill moves (1-5)','skillMoves'],['Custom set ids (comma separated)','sets']].map(([l,k])=>'<div class="field"><label>'+l+'</label><input id="p_'+k+'" value="'+esc(Array.isArray(p[k])?p[k].join(','):((k==='buyPrice'||k==='resalePrice')?priceOf(p[k]):(p[k]??'')))+'"></div>').join('')+
  '<div class="field"><label>Rarity</label><select id="p_rarity"><option>Bronze</option><option>Silver</option><option>Gold</option></select></div><div class="field"><label>Special</label><select id="p_special"><option value="">Base</option><option>Hero</option><option>Heroic</option><option>Icon</option><option>TOTW</option></select></div><div class="field"><label>Gender</label><select id="p_gender"><option value="men">Men</option><option value="women">Women</option></select></div><div class="field"><label>Collected</label><input id="p_collected" type="checkbox" '+(p.collected?'checked':'')+'></div><div class="field"><label>First owner</label><input id="p_first" type="checkbox" '+(p.firstOwner?'checked':'')+'></div><div class="field"><label>Holographic</label><input id="p_holo" type="checkbox" '+(p.holographic?'checked':'')+'></div></div><div style="margin-top:13px"><button class="btn primary" id="saveP">Save</button> '+(id?'<button class="btn danger" id="delP">Delete</button>':'')+'</div>');
  p_rarity.value=p.rarity||'Silver';p_special.value=p.special||'';p_gender.value=p.gender||'men';
- saveP.onclick=()=>{let np={...p};['name','club','league','nation','position','itemId','playerKey'].forEach(k=>np[k]=document.getElementById('p_'+k).value);['score','buyPrice','resalePrice','weakFoot','skillMoves'].forEach(k=>np[k]=+document.getElementById('p_'+k).value);np.sets=document.getElementById('p_sets').value.split(',').map(s=>s.trim()).filter(Boolean);np.rarity=p_rarity.value;np.special=p_special.value;np.gender=p_gender.value;np.collected=p_collected.checked;np.firstOwner=p_first.checked;np.holographic=p_holo.checked;
+ saveP.onclick=()=>{let np={...p};['name','club','league','nation','position','itemId','playerKey'].forEach(k=>np[k]=document.getElementById('p_'+k).value);['score','buyPrice','resalePrice','weakFoot','skillMoves'].forEach(k=>np[k]=+document.getElementById('p_'+k).value);np.buyPrice=priceSnapshot(np.buyPrice);np.resalePrice=priceSnapshot(np.resalePrice);np.priceFetchedAt=new Date().toISOString();np.sets=document.getElementById('p_sets').value.split(',').map(s=>s.trim()).filter(Boolean);np.rarity=p_rarity.value;np.special=p_special.value;np.gender=p_gender.value;np.collected=p_collected.checked;np.firstOwner=p_first.checked;np.holographic=p_holo.checked;
  // itemId = identity of THIS card row. It falls back to the record id (p.id),
  // which is unique per saved row -- NOT to playerKey. Two card versions of one
  // player share playerKey (Multiples!) but must keep distinct itemIds.
@@ -1114,9 +1207,17 @@ function download(name,obj){let a=document.createElement('a');a.href=URL.createO
 function demoState(){let s=structuredClone(blank),make=(id,name,score,price,c,club,league,rarity='Silver')=>({id,itemId:id,playerKey:name.toLowerCase().replace(/[^a-z0-9]+/g,'-'),name,score,buyPrice:price,resalePrice:price,collected:c,firstOwner:false,club,league,nation:'Spain',rarity,special:'',position:'CM',gender:'men',weakFoot:3,skillMoves:3,holographic:false,sets:[]});for(let i=1;i<=15;i++)s.players.push(make('a'+i,'Athletic Player '+i,i<9?80:180+(i%3)*70,700+i*40,i<9,'Athletic Club','LALIGA EA SPORTS',i>12?'Bronze':'Silver'));s.galleries=[{id:'athletic',name:'Athletic Club',slots:15,eligibility:{type:'club',value:'Athletic Club',gender:'men'},thresholds:{D:10,C:900,B:1600,A:2400,S:3600},rewards:{D:0,C:5,B:10,A:15,S:25}}];return s}
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));document.getElementById(b.dataset.section).classList.add('active');title.textContent=b.textContent;subtitle.textContent={dashboard:'Find the cheapest route to more Gallery tokens and score.',optimizer:'Rank bundles by token and score value.',collection:'Track cards that have passed through your club.',sets:'Replicate each Gallery set and its grade thresholds.',data:'Bring your real collection into the optimizer.'}[b.dataset.section]});
 demo.onclick=()=>{state=demoState();render()};exportBtn.onclick=()=>download('fc27-gallery-state.json',state);template.onclick=()=>download('fc27-gallery-template.json',blank);reset.onclick=()=>{if(confirm('Reset local data?')){state=structuredClone(blank);render()}};run.onclick=runOptimizer;runTop.onclick=()=>{document.querySelector('[data-section=optimizer]').click();runOptimizer()};addPlayer.onclick=()=>playerModal();addSet.onclick=()=>setModal();close.onclick=()=>modalbg.classList.remove('show');modalbg.onclick=e=>{if(e.target===modalbg)modalbg.classList.remove('show')};playerSearch.oninput=renderPlayers;setSearch.oninput=renderSets;
-[objective,coins,reserve,tax,bundle].forEach(el=>el.onchange=()=>{state.settings.objective=objective.value;state.settings.coins=+coins.value;state.settings.reserve=+reserve.value;state.settings.taxRate=+tax.value;state.settings.maxBundle=+bundle.value;render()});
-jsonFile.onchange=async e=>{let f=e.target.files[0];if(!f)return;try{let x=JSON.parse(await f.text());if(!x.players||!x.galleries)throw Error('Missing players/galleries');state=Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})});render()}catch(err){alert(err.message)}};
-importFutgg.onclick=async()=>{let u=futgg.value.trim();if(!u)return;futggStatus.textContent='Fetching…';try{let r=await fetch('/api/futgg?url='+encodeURIComponent(u));if(!r.ok)throw Error(await r.text());let g=await r.json();let ex=state.galleries.find(x=>x.id===g.id);if(ex)Object.assign(ex,g);else state.galleries.push(g);futggStatus.textContent='Imported. Review under Gallery Sets.';render()}catch(e){futggStatus.textContent='Import failed: '+e.message}};
+[objective,coins,reserve,tax,bundle,priceScenario].forEach(el=>el.onchange=()=>{state.settings.objective=objective.value;state.settings.coins=+coins.value;state.settings.reserve=+reserve.value;state.settings.taxRate=+tax.value;state.settings.maxBundle=+bundle.value;state.settings.priceScenario=priceScenario.value;render()});
+function sizeWarning(r){sizeWarn.textContent=(!r||r.warn)?('Saved data is '+(r?Math.round(r.bytes/1024):'?')+' KB'+(r&&r.bytes>=SIZE_WARN_BYTES?' — approaching the 4 MB browser limit; consider exporting and trimming.':'.')):''}
+function staleNote(){let stale=(state.players||[]).filter(p=>priceStale(p.buyPrice)||priceStale(p.resalePrice)).length;priceStaleNote.textContent=stale?('⚠ '+stale+' card'+(stale===1?'':'s')+' carry a price snapshot older than 30 days — re-enter or re-import to refresh.'):''}
+// Import MERGE: preview first, then apply with explicit confirmation for any
+// field the user may have edited by hand (manual guard).
+function renderMergePreview(preview,onApply){let rows=[];['players','galleries'].forEach(k=>preview[k].forEach(e=>{if(e.status==='unchanged')return;let fields=e.changes.map(c=>c.field+(c.manualGuard?' ⚠':'')).join(', ');rows.push('<tr><td>'+esc(k.slice(0,-1))+'</td><td>'+esc(e.id)+'</td><td>'+e.status+'</td><td>'+e.provenance+'</td><td class="small">'+(fields||'—')+'</td></tr>')}));let s=preview.summary;mergePreview.innerHTML=rows.length?('<div class="small"><b>Import preview</b> — '+s.playersAdded+' new / '+s.playersChanged+' changed players, '+s.galleriesAdded+' new / '+s.galleriesChanged+' changed sets; '+s.estimated+' estimated.'+(s.needsConfirmation?' <span style="color:#e0b050">Some fields look hand-edited (⚠); they will NOT be overwritten unless you confirm.</span>':'')+'</div><div class="table" style="margin-top:8px"><table><thead><tr><th>Kind</th><th>Id</th><th>Status</th><th>Provenance</th><th>Fields</th></tr></thead><tbody>'+rows.join('')+'</tbody></table></div>'+(s.needsConfirmation?'<div style="margin-top:9px"><button class="btn danger" id="mergeConfirm">Overwrite hand-edited fields and apply</button> <button class="btn" id="mergeSkip">Skip those, apply the rest</button> <button class="btn" id="mergeCancel">Cancel</button></div>':'')):'<div class="small muted">Import preview: nothing to change.</div>';if(s.needsConfirmation){mergeConfirm.onclick=()=>onApply(true);mergeSkip.onclick=()=>onApply(false)}else{let b=document.getElementById('mergeCancel');if(b)b.onclick=()=>{mergePreview.innerHTML=''}}}
+function applyIncoming(incoming,source){let preview=mergePreviewFor(state,incoming,source);renderMergePreview(preview,(confirm)=>{let dec={};['players','galleries'].forEach(k=>preview[k].forEach(e=>dec[k+'|'+e.id]=e));let incomingFiltered={players:[],galleries:[]};['players','galleries'].forEach(k=>(incoming[k]||[]).forEach(r=>{let e=dec[k+'|'+String(r.id)];if(e&&e.needsConfirmation&&!confirm)return;incomingFiltered[k].push(r)}));state=Object.assign(structuredClone(blank),state,{players:applyRows(state.players,incomingFiltered.players),galleries:applyRows(state.galleries,incomingFiltered.galleries)});state=migrateState(state);mergePreview.innerHTML='';render()})}
+function applyRows(current,incoming){let out=current.slice(),idx={};out.forEach(r=>idx[String(r.id)]=r);(incoming||[]).forEach(n=>{let k=String(n.id);if(idx[k])Object.assign(idx[k],n);else{out.push(n);idx[k]=n}});return out}
+const mergePreviewFor=(current,incoming,source)=>mergePreview(current,incoming,source);
+jsonFile.onchange=async e=>{let f=e.target.files[0];if(!f)return;try{let x=JSON.parse(await f.text());if(!x.players||!x.galleries)throw Error('Missing players/galleries');let incoming=migrateState(Object.assign(structuredClone(blank),x,{settings:Object.assign({},blank.settings,x.settings||{})}));applyIncoming(incoming,x.source||'json')}catch(err){alert(err.message)}};
+importFutgg.onclick=async()=>{let u=futgg.value.trim();if(!u)return;futggStatus.textContent='Fetching…';try{let r=await fetch('/api/futgg?url='+encodeURIComponent(u));if(!r.ok){let e=await r.json().catch(()=>({}));throw Error(e.reason||e.error||r.status)}let g=await r.json();let ex=state.galleries.find(x=>x.id===g.id);if(ex)Object.assign(ex,g);else state.galleries.push(g);state=migrateState(state);render();futggStatus.textContent='Imported'+(g.cached?' (cached)':'')+' · snapshot '+(g.fetchedAt||'').slice(0,19).replace('T',' ')+' UTC · review under Gallery Sets.'}catch(e){futggStatus.textContent='Import failed: '+e.message}};
 render();
 </script>
 </body>

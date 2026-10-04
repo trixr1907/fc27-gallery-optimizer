@@ -54,6 +54,26 @@ function sanScore(x) {
   return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
+// Price reader (P2). Prices are stored as DATED snapshots ({value, fetchedAt}),
+// but legacy/constructed inputs may be bare numbers. Both shapes must read the
+// same so the engine never sees NaN from a snapshot. Mirrors server.price_value.
+function priceOf(x, scenario) {
+  // Read a price whether it is a bare number or a dated snapshot. An optional
+  // scenario ('best' | 'base' | 'worst') selects a spread value when present and
+  // otherwise falls back to the base value -- so the optimizer can optimise a
+  // conservative (worst-case) or optimistic (best-case) price without any other
+  // code change. A missing/invalid price reads as 0.
+  let v = x;
+  if (x && typeof x === 'object') {
+    if (scenario && scenario !== 'base' && Number.isFinite(+x[scenario])) v = x[scenario];
+    else if (Number.isFinite(+x.value)) v = x.value;
+    else if (Number.isFinite(+x.base)) v = x.base;
+    else v = undefined;
+  }
+  const n = +v;
+  return Number.isFinite(n) ? n : 0;
+}
+
 // Core bonus primitive: floor(sum of matched item scores * pct).
 // Extracted as a standalone function so unit tests can target it directly.
 function bonus(matchedItems, p) {
@@ -214,9 +234,12 @@ function tokens(g, gr) {
 }
 
 // Expected permanent coin loss = buy - (1 - tax) * resale, floored, clamped >= 0.
-function loss(p, taxRate) {
-  const buy = +p.buyPrice || 0;
-  const res = +p.resalePrice || buy;
+// Prices may be bare numbers or dated snapshots -- priceOf() normalises both.
+// The optional `scenario` ('best' | 'base' | 'worst') lets the caller price a
+// conservative (worst) or optimistic (best) case; default is the base value.
+function loss(p, taxRate, scenario) {
+  const buy = priceOf(p.buyPrice, scenario);
+  const res = priceOf(p.resalePrice, scenario) || buy;
   return Math.max(0, buy - Math.floor(res * (1 - (taxRate ?? 0.05))));
 }
 
@@ -263,7 +286,7 @@ function candidatesFor(g, players, collectedIds) {
   const byId = new Map();
   for (const p of players) {
     if ((collectedIds && collectedIds.has(p.itemId || p.id)) || p.collected) continue;
-    if (!eligible(p, g) || !(+p.buyPrice > 0)) continue;
+    if (!eligible(p, g) || !(priceOf(p.buyPrice) > 0)) continue;
     const k = p.itemId || p.id, prev = byId.get(k);
     if (!prev || sanScore(p.score) > sanScore(prev.score)) byId.set(k, p);
   }
@@ -360,7 +383,7 @@ function bbValue(g, evalPool, S, opts) {
   const chosenOnly = new Set((opts.ownedIds || []));
   for (const x of S) chosenOnly.add(idOf(x));
   const ev = evalSet(g, evalPool, chosenOnly);
-  const totalLoss = S.reduce((s, p) => s + loss(p, opts.taxRate), 0);
+  const totalLoss = S.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
   const dTokens = tokens(g, ev.grade) - (opts.baseTokens || 0);
   const dScore = ev.score - (opts.baseScore || 0);
   return { value: objectiveValue(opts.objective, dTokens, dScore, totalLoss), loss: totalLoss, dScore, dTokens, score: ev.score };
@@ -385,13 +408,13 @@ function branchAndBound(g, pool, unitsNeeded, cands, seed, opts) {
   const bopts = Object.assign({}, opts, { ownedIds });
   // Explore high-loss candidates first so expensive branches are bounded early.
   const order = cands.slice().sort((a, b) =>
-    (loss(b, opts.taxRate) - loss(a, opts.taxRate)) || (b.score - a.score)
+    (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (b.score - a.score)
     || String(idOf(a)).localeCompare(String(idOf(b))));
   let best = (seed || []).slice();
   // The seed must itself be affordable; otherwise it is not a valid incumbent
   // (B&B would "return" an infeasible set that the caller then has to truncate,
   // losing the optimum). Drop an over-budget seed and start from the empty set.
-  const seedCost = best.reduce((s, c) => s + (+c.buyPrice || 0), 0);
+  const seedCost = best.reduce((s, c) => s + priceOf(c.buyPrice, opts.priceScenario), 0);
   if (seedCost > coins) best = [];
   let bestVal = bbValue(g, evalPool, best, bopts).value;
   let nodes = 0;
@@ -414,7 +437,7 @@ function branchAndBound(g, pool, unitsNeeded, cands, seed, opts) {
       const c = order[i];
       if (baseIdSet.has(idOf(c)) || S.some(x => idOf(x) === idOf(c))) continue;
       const spent = (opts.seedSpend || 0)
-        + S.reduce((s, p) => s + (+p.buyPrice || 0), 0) + (+c.buyPrice || 0);
+        + S.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0) + priceOf(c.buyPrice, opts.priceScenario);
       if (spent > coins) continue; // hard coin-budget constraint
       const S2 = S.concat([c]);
       const v = bbValue(g, evalPool, S2, bopts).value;
@@ -465,14 +488,14 @@ function improve2opt(sel, pool, cands, g, opts) {
     const ev = evalSet(g, universe, ids);
     const dTokens = tokens(g, ev.grade) - baseTokens;
     const dScore = ev.score - baseScore;
-    const dLoss = list.reduce((s, p) => s + loss(p, opts.taxRate), 0);
+    const dLoss = list.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
     return objectiveValue(opts.objective, dTokens, dScore, dLoss);
   };
   // Coin budget: an edit that pushes spend above `opts.coins` is NOT a valid
   // improvement (B&B only ever returns affordable sets, so refinement must not
   // silently make the plan infeasible).
   const coins = +opts.coins != null ? +opts.coins : Infinity;
-  const spendOf = list => list.reduce((s, p) => s + (+p.buyPrice || 0), 0);
+  const spendOf = list => list.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0);
   let cur = sel.slice(), curVal = valOf(cur);
   for (let pass = 0; pass < 4; pass++) {
     let best = null, bestVal = curVal;
@@ -507,9 +530,14 @@ function planSet(g, players, opts) {
   opts = opts || {};
   const objective = opts.objective || 'eff';
   const taxRate = opts.taxRate;
+  // Price scenario: 'base' (default) | 'best' | 'worst'. Determines which price
+  // spread value is used for every cost/budget decision in this plan.
+  const scenario = opts.priceScenario || 'base';
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const collectedIds = opts.collectedIds;
+  // All cost decisions in this plan read the ACTIVE price scenario.
+  const buyOf = (x) => priceOf(x.buyPrice, scenario);
   const pool = poolFor(g, players, collectedIds);
   const n = +g.slots || 15;
   const base = { items: pool.slice(0, n), ...score(pool), count: pool.length };
@@ -518,7 +546,7 @@ function planSet(g, players, opts) {
   const cands = candidatesFor(g, players, collectedIds);
   // units = unpriced eligible items, used to fill slots before buying anything.
   const units = players.filter(p => !((collectedIds && collectedIds.has(p.itemId || p.id)) || p.collected)
-    && eligible(p, g) && !(+p.buyPrice > 0));
+    && eligible(p, g) && !(priceOf(p.buyPrice, scenario) > 0));
   const slotsFree = Math.max(0, n - pool.length);
   const unitsNeeded = units.slice(0, slotsFree);
   const virtualCount = pool.length + unitsNeeded.length;
@@ -534,12 +562,12 @@ function planSet(g, players, opts) {
     let best = null, bestGain = -1;
     for (const c of candsSorted) {
       if (sel.some(s => (s.itemId || s.id) === (c.itemId || c.id))) continue;
-      if (seedSpend + (+c.buyPrice || 0) > coins) continue;
+      if (seedSpend + buyOf(c) > coins) continue;
       const gv = gain1(g, seedItems.concat(sel), c);
       if (gv > bestGain || best === null) { bestGain = gv; best = c; }
     }
     if (!best) break;
-    sel.push(best); seedSpend += (+best.buyPrice || 0);
+    sel.push(best); seedSpend += buyOf(best);
   }
   // --- R3: Branch & Bound over candidate sets S --------------------------------
   // Primary search path: `branchAndBound` explores the space of priced card
@@ -550,7 +578,7 @@ function planSet(g, players, opts) {
   // The admissible bound is `setUpperBound` (NOT evalSet over the whole pool --
   // `lineup()` is heuristic and not monotone, see the note above).
   const bbOpts = {
-    objective, taxRate, baseTokens, baseScore, maxBundle, coins,
+    objective, taxRate, priceScenario: scenario, baseTokens, baseScore, maxBundle, coins,
     seedSpend: 0, maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
   };
   const bb = branchAndBound(g, pool.concat(unitsNeeded), [], cands, sel, bbOpts);
@@ -564,14 +592,14 @@ function planSet(g, players, opts) {
   const shortage = n - virtualCount - sel.length;
   if (shortage > 0) {
     const usedIds = new Set([...pool, ...unitsNeeded, ...sel].map(x => x.itemId || x.id));
-    const fpool = cands.filter(c => !usedIds.has(c.itemId || c.id) && (+c.buyPrice || 0) <= coins - spendTotal(sel))
-      .sort((a, b) => (+a.buyPrice || 0) - (+b.buyPrice || 0) || (b.score - a.score));
-    let acc = spendTotal(sel), picks = [];
-    for (const c of fpool) { if (acc + (+c.buyPrice || 0) <= coins) { picks.push(c); acc += (+c.buyPrice || 0); } }
+    const fpool = cands.filter(c => !usedIds.has(c.itemId || c.id) && buyOf(c) <= coins - spendTotal(sel, scenario))
+      .sort((a, b) => buyOf(a) - buyOf(b) || (b.score - a.score));
+    let acc = spendTotal(sel, scenario), picks = [];
+    for (const c of fpool) { if (acc + buyOf(c) <= coins) { picks.push(c); acc += buyOf(c); } }
     filler = picks;
   }
   // 2-opt refinement against the real objective (upgrades only; fillers are slot fillers).
-  sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, { objective, taxRate, baseTokens, baseScore, coins });
+  sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, { objective, taxRate, priceScenario: scenario, baseTokens, baseScore, coins });
   const chosen = sel.slice().sort((a, b) => (b.score - a.score) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id)));
   const fillers = filler || [];
   const recs = unitsNeeded.concat(fillers).concat(chosen);
@@ -585,10 +613,10 @@ function planSet(g, players, opts) {
   const newGrade = newEval.grade;
   const dTokens = tokens(g, newGrade) - baseTokens;
   const dScore = buyScore - baseScore;
-  const dLoss = chosen.concat(fillers).reduce((s, p) => s + loss(p, taxRate), 0);
-  const feasible = spendTotal(chosen.concat(fillers)) <= coins;
+  const dLoss = chosen.concat(fillers).reduce((s, p) => s + loss(p, taxRate, scenario), 0);
+  const feasible = spendTotal(chosen.concat(fillers), scenario) <= coins;
   const recsSorted = recs.slice().sort((a, b) => {
-    const uc = (x) => (+x.buyPrice > 0 ? 1 : 0); // units first (they are free)
+    const uc = (x) => (buyOf(x) > 0 ? 1 : 0); // units first (they are free)
     return (uc(a) - uc(b)) || ((+b.score || 0) - (+a.score || 0)) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id));
   });
   return {
@@ -608,7 +636,7 @@ function planSet(g, players, opts) {
     optimality, nodes: bb.nodes
   };
 }
-function spendTotal(items) { return items.reduce((s, p) => s + (+p.buyPrice || 0), 0); }
+function spendTotal(items, scenario) { return items.reduce((s, p) => s + priceOf(p.buyPrice, scenario), 0); }
 
 // ---- R3: portfolio optimisation across several sets --------------------------
 // Buying ONE card can improve SEVERAL sets at once, so its coin loss must count
@@ -671,7 +699,7 @@ function portfolioValue(galleries, pools, prices, S, opts) {
     dTokens += dt; dScore += ds;
     value += objectiveValue(opts.objective, dt, ds, 0);
   }
-  const totalCost = S.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const totalCost = S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   return { value, cost: totalCost, dTokens, dScore };
 }
 // Brute-force reference (used by tests; kept simple so it is obviously correct).
@@ -685,7 +713,7 @@ function portfolioBrute(galleries, players, opts) {
   const w = portfolioWorld(galleries, players, opts);
   const idOf = x => x.itemId || x.id;
   const budget = Math.max(0, (+opts.coins != null ? +opts.coins : Infinity) - (+opts.reserve || 0));
-  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, budget, bases: w.bases };
+  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: w.bases };
   let best = [], bestVal = -Infinity, bestCost = 0;
   const cands = w.cands, n = Math.min(cands.length, Math.max(1, +opts.maxBundle || 15));
   if (cands.length > 30) throw new Error('portfolioBrute: candidate universe too large (' + cands.length + ')');
@@ -734,20 +762,20 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
   const budget = opts.budget;
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
   const maxNodes = +opts.maxNodes > 0 ? +opts.maxNodes : 200000;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget, bases: opts.bases };
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
   const ubVal = portfolioUpperBound(galleries, pools, prices, vopts);
   // Deterministic order: expensive cards first (bounded early), then by score desc.
   const order = cands.slice().sort((a, b) =>
-    (loss(b, opts.taxRate) - loss(a, opts.taxRate)) || (sanScore(b.score) - sanScore(a.score))
+    (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (sanScore(b.score) - sanScore(a.score))
     || String(idOf(a)).localeCompare(String(idOf(b))));
   // Seed must itself be affordable, else discard it (B&B returns feasible sets).
   let best = (seed || []).slice();
-  const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   if (seedCost > budget) best = [];
   let bestVal = portfolioValue(galleries, pools, prices, best, vopts).value;
-  let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   let nodes = 0, aborted = false;
-  const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   const rec = (idx, S) => {
     if (aborted) return;
     if (++nodes > maxNodes) { aborted = true; return; }
@@ -758,7 +786,7 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
     for (let i = idx; i < order.length; i++) {
       const c = order[i];
       if (S.some(x => idOf(x) === idOf(c))) continue;
-      if (partialCost(S) + loss(c, opts.taxRate) > budget) continue; // hard budget
+      if (partialCost(S) + loss(c, opts.taxRate, opts.priceScenario) > budget) continue; // hard budget
       const S2 = S.concat([c]);
       const r = portfolioValue(galleries, pools, prices, S2, vopts);
       if (r.value > bestVal || (r.value === bestVal && r.cost < bestCost)) {
@@ -776,8 +804,8 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
 function portfolioImprove2opt(galleries, pools, prices, cands, sel, opts) {
   const idOf = x => x.itemId || x.id;
   const budget = opts.budget;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget, bases: opts.bases };
-  const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate), 0);
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
+  const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   const valOf = list => portfolioValue(galleries, pools, prices, list, vopts).value;
   let cur = sel.slice(), curVal = valOf(cur);
   for (let pass = 0; pass < 4; pass++) {
@@ -804,7 +832,7 @@ function portfolioImprove2opt(galleries, pools, prices, cands, sel, opts) {
 // Deterministic greedy marginal seed over the shared candidate universe (cost
 // charged once). Used ONLY as a B&B seed, so it is also itself a feasible plan.
 function portfolioGreedySeed(galleries, pools, prices, cands, opts) {
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, budget: opts.budget, bases: opts.bases };
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget: opts.budget, bases: opts.bases };
   let selected = [], selVal = portfolioValue(galleries, pools, prices, selected, vopts).value;
   const usedIds = new Set();
   for (let k = 0; k < Math.max(1, +opts.maxBundle || 15); k++) {
@@ -838,6 +866,8 @@ function portfolioPlan(galleries, players, opts) {
   opts = opts || {};
   const objective = opts.objective || 'eff';
   const taxRate = opts.taxRate;
+  // Active price scenario, propagated to every per-set / portfolio sub-call.
+  const priceScenario = opts.priceScenario || 'base';
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const reserve = +opts.reserve || 0;
   const budget = Math.max(0, coins - reserve);
@@ -845,7 +875,7 @@ function portfolioPlan(galleries, players, opts) {
 
   const w = portfolioWorld(galleries, players, opts);
   const gs = w.gs, pools = w.pools, prices = w.prices, cands = w.cands;
-  const vopts = { objective, taxRate, budget, bases: w.bases };
+  const vopts = { objective, taxRate, priceScenario, budget, bases: w.bases };
 
   // Per-set detail rows for a chosen id list (shared by every regime).
   const detailFor = chosenIds => gs.map((g, i) => {
@@ -882,13 +912,13 @@ function portfolioPlan(galleries, players, opts) {
   }
 
   // ---- Global B&B over the shared set S (the R3 portfolio path, larger pools).
-  const seed = portfolioGreedySeed(gs, pools, prices, cands, { objective, taxRate, budget, maxBundle, bases: w.bases });
+  const seed = portfolioGreedySeed(gs, pools, prices, cands, { objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases });
   const bb = portfolioBranchAndBound(gs, pools, prices, cands, seed, {
-    objective, taxRate, budget, maxBundle, bases: w.bases,
+    objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases,
     maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
   });
   // 2-opt refinement (budget-respecting): keep it only if it raises value.
-  const refined = portfolioImprove2opt(gs, pools, prices, cands, bb.best, { objective, taxRate, budget, bases: w.bases });
+  const refined = portfolioImprove2opt(gs, pools, prices, cands, bb.best, { objective, taxRate, priceScenario, budget, bases: w.bases });
   const refinedVal = portfolioValue(gs, pools, prices, refined, vopts).value;
   const chosenSel = refinedVal >= bb.value ? refined : bb.best;
   const chosenIds = chosenSel.map(x => x.itemId || x.id).sort();
@@ -908,11 +938,12 @@ const EXACT_PORTFOLIO_LIMIT = EXACT_PF_LIMIT;
 // Plan every set and rank. `plans` is a deterministic best-first list.
 function plan(galleries, players, opts) {
   opts = opts || {};
-  const p = (galleries || []).map(g => planSet(g, players, opts));
+  const priceScenario = opts.priceScenario || 'base';
+  const p = (galleries || []).map(g => planSet(g, players, Object.assign({}, opts, { priceScenario })));
   const ranked = p.slice().sort((a, b) => (b.value - a.value)
     || (b.dTokens - a.dTokens) || (b.dScore - a.dScore) || String(a.set).localeCompare(String(b.set)));
   const portfolio = portfolioPlan(galleries, players, opts);
   return { plans: ranked, all: p, portfolio };
 }
 // ===== ENGINE END =====
-if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };
+if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, priceOf, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };

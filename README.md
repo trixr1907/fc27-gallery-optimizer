@@ -31,6 +31,82 @@ You can also open `index.html` directly. Everything except the experimental FUT.
 - Recalculates overlapping league/club sets after each planned bundle.
 - Uses expected permanent coin loss = `buy price - 95% of expected resale` by default. The sale-tax rate is editable.
 
+## Prices and data are dated snapshots
+
+Nothing in this tool treats a price as a timeless product value. A stored price is
+a **dated snapshot** with an optional uncertainty spread:
+
+```json
+{
+  "value": 1200, "best": 1100, "worst": 1400,
+  "priceUpdatedAt": "2026-10-04T09:00:00.000Z", "source": "fut.gg"
+}
+```
+
+- `value` (a.k.a. `base`) is the normal price; `best` / `worst` are the optimistic
+  and conservative cases. A plain number is auto-wrapped with these fields on
+  save/migration, so older exports keep working and `best`/`worst` default to base.
+- The optimizer reads the **active price case** everywhere (`loss`, budget,
+  feasibility, ranking). Set **Price case** to *Base*, *Worst case*
+  (conservative) or *Best case* in the Settings panel — the whole plan is then
+  computed for that case.
+- `priceUpdatedAt` records when the price was read and `source` records where it
+  came from. A snapshot older than **30 days** is surfaced as a **staleness
+  warning** (⚠ in Data & Sync) so a stale price is never mistaken for a current one.
+- The FUT.GG importer attaches the fetch time to the payload it returns, and a
+  repeated fetch within the cache window is served from cache with `cached: true`
+  and the **original** timestamp.
+- Because prices move, any figure quoted in a report or fixture here is a **dated
+  snapshot**, never a live value. The tag *model* (per-tag floor, top-10 cut) is
+  stable; the tag *numbers* are not (see T-5 in `AUDIT.md`).
+
+## Saved state, schema version and migration
+
+Your saved data carries a `schemaVersion` (currently **2**) and is stored under a
+**versioned key** (`fc27gallery.v2`). On the first load of an older payload the
+legacy `fc27gallery` value is copied to **`fc27gallery.v0.bak`** *before*
+migration, so an unwanted migration is always recoverable. A serialized state near
+**4 MB** raises a non-blocking **size warning** (the browser storage limit is
+approximate; export and trim if you get close).
+
+On load and on JSON import the app migrates older data **forward**: bare prices
+become snapshots (with `best`/`worst` filled from the base), legacy special values
+are canonicalised, and missing fetch timestamps are filled in. Migration is
+**idempotent** and **refuses** a file from a *newer* app version rather than
+mis-reading it. The same rules are implemented on the server (`server.py`) and in
+the UI (`index.html`), each tested separately.
+
+## Importing a JSON snapshot (merge preview)
+
+Importing a snapshot never silently overwrites what you edited. The app first
+shows a **preview/diff** — what would be added, changed or left unchanged, field
+by field — and tags each incoming record as **verified** (a trusted source) or
+**estimated**. Any change to a field you plausibly edited by hand (a price, a
+score, an item id) is **guarded**: it is *not* applied unless you explicitly
+confirm, and you can choose to apply everything else while skipping those. The
+FUT.GG set importer merges the same way.
+
+## Local server hardening
+
+When you run `python3 server.py`, the built-in importer is deliberately narrow:
+
+- It only fetches the **exact host `www.fut.gg` over `https`**, with no userinfo,
+  port or fragment, and only paths under `/fut-gallery/` (an allow-list, not a
+  blocklist).
+- The importer can be **disabled entirely** by setting `FC27_NO_IMPORT=1`, and it
+  is **rate-limited** per client (30 requests / 60 s → `429`).
+- Static file serving rejects path traversal and absolute/NUL paths, **never lists
+  a directory**, and refuses any path that resolves outside the static root.
+- Responses are capped (oversized upstream pages are rejected, `413`), only the
+  needed HTTP methods are allowed (`405` otherwise), security headers
+  (`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`) are always sent, and API responses are
+  `Cache-Control: no-store` (they carry dated snapshots).
+- Fetch failures return a generic `502` with no stack trace.
+
+You can ignore all of this if you only open `index.html` directly — everything
+except the FUT.GG URL importer works fully offline.
+
 ## Data you need
 
 The app is only as good as its inputs. For each card, the key fields are:

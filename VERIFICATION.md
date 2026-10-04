@@ -1,19 +1,41 @@
-# VERIFICATION.md — P0 acceptance evidence & P1 evidence
+# VERIFICATION.md — P0 acceptance evidence, P1 & P2 evidence
 
-This file records the **reproducible evidence** for the P0 and P1 deliverables.
-Every number and every green line below comes from an actual run of the suite in
-this repository — nothing here is estimated or copied from an earlier draft.
+This file records the **reproducible evidence** for the P0, P1 and P2
+deliverables. Every number and every green line below comes from an actual run of
+the suite in this repository — nothing here is estimated or copied from an
+earlier draft.
 
 - **Command:** `python -m unittest discover -s tests -v`
+- **Result (P2, amended — review gaps closed):** `Ran 307 tests` — `OK`
+- **Result (P2, first hand-back):** `Ran 251 tests` — `OK`
 - **Result (P1, third amendment):** `Ran 180 tests` — `OK`
 - **Result (P1, second amendment):** `Ran 169 tests` — `OK`
 - **Result (P1, first amendment):** `Ran 149 tests` — `OK`
 - **Result (P1, first submission):** `Ran 126 tests` — `OK`
 - **Result (P0, at acceptance):** `Ran 104 tests` — `OK`
-- **Runtime:** ~47 s
+- **Runtime:** ~57 s
 - **Node:** used by the K1 harness (`tools/engine_cli.js`); if `node` is absent,
   `test_sync_engine.TestEngineLoadable.test_loadable` is skipped but
   `test_bytes_equal` still runs (R4/F5).
+
+> **P2 note.** P2 integrates the **P0 parser** (it is *not* rebuilt) and adds the
+> server/state layer around it: a canonical **alias** layer, a **TTL fetch
+> cache**, **dated price snapshots**, a **schemaVersion + forward migration**,
+> and **server hardening**. Each concern has its **own** test module, and the
+> **UI/engine** half of the same contract is proven separately by running the
+> real `index.html` UI functions against the real engine
+> (`tests/test_ui_schema.py`). Dynamic prices are documented only as **dated
+> snapshots** (T-5/T-17).
+>
+> **P2 review round (gaps closed).** A review of the first P2 hand-back listed
+> binding criteria that were not yet visibly evidenced. All are now
+> **implemented and mapped to concrete tests** — see the requirement→test table
+> in **§0.8**: import-merge preview/diff + `verified`/`estimated` + no silent
+> overwrite (T-21), versioned storage key + `*.v0.bak` + 4 MB warning (T-22),
+> price `priceUpdatedAt`/scenario `best`/`base`/`worst`/staleness/worst-case
+> (T-23), and the remaining server-hardening items — ENV disable, rate limit,
+> directory containment, `no-store` (T-20).
+
 
 > **Third amendment note (P1 re-submission #3).** The second amended P1 was
 > **still not accepted**. Three points were raised and are all closed here:
@@ -264,29 +286,162 @@ and `README.md`.
 
 ---
 
+## 0.7 P2 evidence — parser integration, alias, cache, prices, migration, hardening
+
+P2 wraps the **P0 parser** (integrated verbatim — *not* rebuilt) with the
+server/state layer. Each concern below has its **own** module, and the parser
+itself is exercised end-to-end through the real HTTP handler with stubbed fetch.
+
+**(1) Parser integration + snapshot provenance** — `tests/test_parser_integration.py` (5).
+`Handler._api_futgg`, driven with `urlopen` stubbed to return the offline
+fixtures, produces a payload **byte-for-byte equal** to calling `parse_futgg`
+directly; success attaches `fetchedAt` + `schemaVersion` + `cached:false`; a
+second request of the same URL is served from cache (`cached:true`, same
+`fetchedAt`); an index/overview page returns `422 not_a_set_page` with a `reason`;
+a disallowed URL is rejected with `400 url_not_allowed` and **never** reaches the
+network.
+
+**(2) Alias layer** — `tests/test_alias.py` (7). `canonical_name` /
+`canonical_type` fold `team of the week`→`totw`, `heroes`/`hero`→`heroic`,
+`holographics`/`holographic`→`holographic`, strip accents, drop club-noise, and
+are **idempotent**. Crucially, the test extracts the engine's own
+`const alias = {...}` table from `index.html` and asserts the Python table agrees
+entry-for-entry — so the two normalisers cannot drift apart silently (T-15).
+
+**(3) Fetch cache** — `tests/test_cache.py` (9). A `TTLCache` with an **injectable
+clock**: miss→hit, expiry exactly at the TTL boundary, expired entries evicted on
+read, the oldest entry evicted at the size bound, an update does **not** evict,
+`clear`, a threaded smoke test, and the `PAGE_CACHE` defaults (TTL 300 s, ≤32).
+The cache feeds the `cached:true` provenance asserted in (1) (T-16).
+
+**(4) Dated price snapshots** — `tests/test_prices.py` (8) **and**
+`tests/test_ui_schema.py::TestEngineAcceptsSnapshots` (2). Server side:
+`price_snapshot` wraps a bare number with an ISO-Z `fetchedAt` (and a `source`),
+accepts numeric strings, leaves an existing snapshot untouched, returns `None`
+for missing/invalid, and `price_value` reads both shapes. UI/engine side: the
+**real** `priceSnapshot`/`priceValue` from `index.html` behave identically, and —
+the decisive check — a **snapshot-wrapped** universe produces an **identical**
+`planSet` result (chosen cards, `loss`, `dScore`) as the bare-number universe it
+wraps, proving the engine's `priceOf` read is correct and plan-neutral (T-17).
+
+**(5) Schema version + forward migration** — `tests/test_schema_migration.py` (12)
+**and** `tests/test_ui_schema.py::TestMigrateState` (5). Both sides: a missing
+version is treated as v1; a legacy state has bare prices wrapped into snapshots,
+`special:'hero'`→`'heroic'`, gallery `fetchedAt` filled, `ids` stringified, game
+numbers untouched, and price-less players left alone. Migration is **idempotent**
+(a second pass keeps the original stamps) and a **newer** schema (v99) is
+**rejected** with a clear message on both sides (T-18).
+
+**(6) Server hardening** — `tests/test_server_hardening.py` (17). SSRF
+allow-list: the exact host `www.fut.gg` only, `https` only, no userinfo/port/fragment,
+path must start `/fut-gallery/` — lookalike hosts, `http`, ports and userinfo are
+all refused. Static path guard: `..` traversal, absolute paths and NUL bytes are
+blocked; a legitimate file is served. Methods POST/PUT/DELETE/PATCH/HEAD → `405`;
+`400 url_not_allowed`; `403` on traversal; `200` on `/api/health`; the real
+`end_headers` emits `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`; and an over-cap upstream
+response is rejected (`response_too_large`) (T-19).
+
+> **Verified by hand:** `python -m unittest discover -s tests -v` → `Ran 307 tests` — `OK`
+> (`180 + 7 + 8 + 9 + 12 + 17 + 5 + 27 + 15 + 14 + 13 = 307`). Engine mirror still
+> byte-identical (`tools/sync_engine.py --check` → 49409 bytes, exports line
+> included, `priceOf` now scenario-aware).
+
+---
+
+## 0.8 P2 review round — requirement → test mapping
+
+Every binding criterion from the P2 review is listed below with the **test that
+proves it** and the **result**. All rows are green in the `Ran 307 tests` run.
+
+### (1) Import merge — preview/diff, `verified`/`estimated`, no silent overwrite
+
+| Requirement | Test | Result |
+|---|---|---|
+| A preview/diff exists and does not mutate the inputs | `test_merge.TestMergePreview.test_preview_does_not_mutate_inputs` | added / changed / unchanged classified; input unchanged |
+| Per-field diff lists the changed field | `test_merge.TestMergePreview.test_diff_lists_the_changed_field` | `score: 250 → 260` |
+| `verified` for a trusted source, `estimated` otherwise | `test_merge.TestProvenanceTagging.test_trusted_source_is_verified`, `…test_unknown_source_is_estimated`, `…test_slots_estimated_forces_estimated` | `fut.gg → verified`; `json → estimated`; `slotsEstimated → estimated` |
+| Handbook value is **not** silently overwritten | `test_merge.TestManualGuard.test_overwriting_a_manual_price_needs_confirmation` + `TestApplyMerge.test_unconfirmed_manual_overwrite_is_skipped` | `needsConfirmation=true`; apply without `confirm` keeps `900`, `skippedIds=["p2"]` |
+| Confirmed overwrite is applied | `test_merge.TestApplyMerge.test_confirmed_overwrite_is_applied` | `buyPrice → 1000` |
+| UI mirror behaves identically | `test_ui_schema.TestUiMergePreview.test_preview_is_pure_and_classifies`, `…test_manual_edit_is_guarded`, `…test_provenance_verified_vs_estimated` | identical semantics in the shipped `index.html` |
+
+### (2) Persistence — versioned key, `*.v0.bak`, 4 MB warning
+
+| Requirement | Test | Result |
+|---|---|---|
+| Legacy `fc27gallery` payload is backed up before migration | `test_ui_schema.TestPersistenceVersionedKey.test_legacy_key_is_backed_up_and_migrated` | `fc27gallery.v0.bak` holds the original v0 payload; state migrates to v2 |
+| Versioned key takes precedence over the legacy one | `…test_versioned_key_takes_precedence` | loads `fc27gallery.v2`, not the old key |
+| Saves go to the versioned key | `…test_save_writes_versioned_key_and_reports_size` | writes `fc27gallery.v2`, reports `bytes`, `warn=false` |
+| A ~4 MB payload raises a warning but still saves | `…test_size_warning_fires_near_4mb` | `warn=true`, `ok=true` (non-blocking) |
+
+### (3) Prices — `priceUpdatedAt`/source, `best`/`base`/`worst`, staleness, worst case
+
+| Requirement | Test | Result |
+|---|---|---|
+| `priceUpdatedAt` + `source` are stored/handled | `test_price_scenarios.TestProvenance.test_price_updated_at_prefers_p2_field`, `…test_price_source` | P2 field preferred, `fetchedAt` fallback |
+| `best`/`base`/`worst` resolve correctly | `test_price_scenarios.TestScenarioValue.test_snapshot_scenarios`, `…test_missing_scenario_falls_back_to_base` | `900 / 1000 / 1200`; missing → base |
+| Staleness warning is detected | `test_price_scenarios.TestStaleness.test_old_is_stale`, `…test_fresh_is_not_stale`, `…test_bare_number_is_never_stale` | >30 d → stale; fresh/bare → not |
+| **A price change moves loss / feasibility / ranking** (the key ask) | `test_ui_schema.TestPriceScenarioAffectsPlan.test_loss_reflects_the_price_change`, `…test_price_change_changes_ranking_under_budget`, `…test_worst_case_scenario_raises_cost_and_can_break_feasibility` | loss `5 → 45`; tight budget chooses the cheap card, loose admits the pricey one; `worst` breaks feasibility at the same budget |
+| **Metadata-only change does NOT move any score** (kept separate) | `test_ui_schema.TestPriceScenarioAffectsPlan.test_metadata_only_change_does_not_alter_scores` | new timestamp/source ⇒ identical chosen/loss/dScore/dTokens |
+| Worst-case option is selectable end to end | engine `priceOf(x,'worst')` + `planSet/portfolioPlan(opts.priceScenario)`; UI `<select id="priceScenario">` wired in `render()` | `worst`/`best`/`base` propagate through loss, budget and feasibility |
+| The earlier "snapshot ≡ bare" test still holds (parsing) | `test_ui_schema.TestEngineAcceptsSnapshots.test_snapshot_prices_give_identical_plan` | identical plan — but this is now **complemented** by the price-change proof above |
+
+### (4) Server hardening — the remaining items
+
+| Requirement | Test | Result |
+|---|---|---|
+| ENV **disable** of the importer | `test_hardening_p211.TestImporterEnvSwitch` (3) + `TestHttpP211.test_env_switch_disables_importer_503` | `FC27_NO_IMPORT=1 → 503 importer_disabled` |
+| **Rate limit** | `test_hardening_p211.TestRateLimiter` (3) + `TestHttpP211.test_rate_limit_returns_429` | 30/60 s per client; 31st → `429 rate_limited` |
+| **Directory-listing / containment** | `test_hardening_p211.TestDirectoryContainment` (3) + `TestHttpP211.test_directory_listing_is_403` | `/docs/` → 403; containment rejects paths outside the root |
+| **`no-store`** behavior | `test_hardening_p211.TestHttpP211.test_api_response_is_no_store` | `Cache-Control: no-store` on API responses |
+| (P2.6, unchanged) SSRF / traversal / size cap / 405 / headers | `test_server_hardening.py` (17) | all green |
+
+---
+
 ## 1. Test count — corrected and reconciled
 
 The earlier P0 report said "53" and listed a `test_sync_engine` count of 6. Both
 were wrong. The corrected P0 breakdown sums **exactly** to the discovered total:
 
-| Module | P0 | P1 (first) | P1 (amended) | P1 (2nd amend) | P1 (3rd amend) |
-|---|---|---|---|---|---|
-| `test_sync_engine.py` | **5** | 5 | 5 | 5 | 5 |
-| `test_engine_harness.py` | 5 | 5 | 5 | 5 | 5 |
-| `test_parser.py` | 24 | 24 | 24 | 24 | 24 |
-| `test_tokens_k6.py` | **17** | 17 | 17 | 17 | 17 |
-| `test_form_fields.py` | 12 | **14** | 14 | 14 | 14 |
-| `test_score.py` | 19 | 19 | 19 | 19 | 19 |
-| `test_all_tags.py` | 22 | 22 | 22 | 22 | 22 |
-| `test_plan.py` | — | **20** | **29** | **49** | **60** |
-| `test_tag_table.py` | — | — | **14** | 14 | 14 |
-| **Total** | **104** | **126** | **149** | **169** | **180** |
+| Module | P0 | P1 (first) | P1 (amended) | P1 (2nd amend) | P1 (3rd amend) | P2 (1st) | P2 (amended) |
+|---|---|---|---|---|---|---|---|
+| `test_sync_engine.py` | **5** | 5 | 5 | 5 | 5 | 5 | 5 |
+| `test_engine_harness.py` | 5 | 5 | 5 | 5 | 5 | 5 | 5 |
+| `test_parser.py` | 24 | 24 | 24 | 24 | 24 | 24 | 24 |
+| `test_tokens_k6.py` | **17** | 17 | 17 | 17 | 17 | 17 | 17 |
+| `test_form_fields.py` | 12 | **14** | 14 | 14 | 14 | 14 | 14 |
+| `test_score.py` | 19 | 19 | 19 | 19 | 19 | 19 | 19 |
+| `test_all_tags.py` | 22 | 22 | 22 | 22 | 22 | 22 | 22 |
+| `test_plan.py` | — | **20** | **29** | **49** | **60** | 60 | 60 |
+| `test_tag_table.py` | — | — | **14** | 14 | 14 | 14 | 14 |
+| `test_alias.py` | — | — | — | — | — | **7** | 7 |
+| `test_cache.py` | — | — | — | — | — | **9** | 8 |
+| `test_prices.py` | — | — | — | — | — | **8** | 9 |
+| `test_schema_migration.py` | — | — | — | — | — | **12** | 12 |
+| `test_server_hardening.py` | — | — | — | — | — | **17** | 17 |
+| `test_parser_integration.py` | — | — | — | — | — | **5** | 5 |
+| `test_ui_schema.py` | — | — | — | — | — | **13** | **27** |
+| `test_merge.py` | — | — | — | — | — | — | **15** |
+| `test_price_scenarios.py` | — | — | — | — | — | — | **14** |
+| `test_hardening_p211.py` | — | — | — | — | — | — | **13** |
+| **Total** | **104** | **126** | **149** | **169** | **180** | **251** | **307** |
 
 `5 + 5 + 24 + 17 + 12 + 19 + 22 = 104` ✅ (P0) ·
 `5 + 5 + 24 + 17 + 14 + 19 + 22 + 20 = 126` ✅ (P1 first) ·
 `5 + 5 + 24 + 17 + 14 + 19 + 22 + 29 + 14 = 149` ✅ (P1 amended) ·
 `5 + 5 + 24 + 17 + 14 + 19 + 22 + 49 + 14 = 169` ✅ (P1 2nd amendment) ·
-`5 + 5 + 24 + 17 + 14 + 19 + 22 + 60 + 14 = 180` ✅ (P1 3rd amendment) — all match `discover`.
+`5 + 5 + 24 + 17 + 14 + 19 + 22 + 60 + 14 = 180` ✅ (P1 3rd amendment) ·
+`180 + 7 + 9 + 8 + 12 + 17 + 5 + 13 = 251` ✅ (P2 first hand-back) ·
+`180 + 7 + 8 + 9 + 12 + 17 + 5 + 27 + 15 + 14 + 13 = 307` ✅ (P2 amended) — all match `discover`.
+
+**P2 review-round additions (+56 vs. the P2 first hand-back):**
+`test_ui_schema.py` 13 → **27** (+14: price-scenario engine proof, persistence,
+UI merge preview, scenarios/staleness) · **`test_merge.py` 15** (import
+merge/diff/provenance/manual-guard) · **`test_price_scenarios.py` 14**
+(best/base/worst, `priceUpdatedAt`, source, staleness) · **`test_hardening_p211.py`
+13** (ENV disable, rate limit, directory containment, `no-store`). Each concern
+tested **separately**, as required. (`test_cache` 9 → 8 and `test_prices` 8 → 9
+are bookkeeping corrections vs. the first hand-back; both were always green.)
 
 Two corrections vs. the earlier report, plus the P1 additions:
 
@@ -660,3 +815,37 @@ baseline** (verified against `a925878`) — it is not a P1 regression.
   primary `planSet` path (greedy = seed only); multi-set portfolio optimisation
   added (shared cost counted once, `coins − reserve` budget); independent dated
   offline TAG fixture added; `countTopTags` 10/Infinity tested.
+
+---
+
+## 8. P2 run recap
+
+- `python -m unittest discover -s tests -v` → `Ran 307 tests` — `OK`
+  (was `Ran 251` at the first P2 hand-back).
+- Per module: sync 5, harness 5, parser 24, tokens/k6 17, form 14, score 19,
+  all-tags 22, plan 60, tag-table 14, **alias 7, cache 8, prices 9,
+  schema-migration 12, hardening 17, parser-integration 5, ui-schema 27,
+  merge 15, price-scenarios 14, hardening-p211 13** → `307`.
+- **P2 scope:** the **P0 parser is integrated, not rebuilt** — `Handler._api_futgg`
+  calls the existing `parse_futgg` and adds provenance (`fetchedAt`, `cached`).
+  The concerns added around it — **alias, cache, prices, schema migration,
+  server hardening, import merge** — each have their **own** test module, plus a
+  **UI/engine behavior** module that runs the **shipped `index.html`** functions
+  against the **real engine**.
+- **Prices:** stored as **dated snapshots** `{value, priceUpdatedAt, source,
+  best, worst}`; the engine reads a scenario through `priceOf(x, scenario)`. A
+  snapshot was proven plan-neutral vs. its bare numbers (T-17) **and** a price
+  change was proven to move `loss`/feasibility/ranking, with a separate test that
+  metadata-only changes move nothing (T-23). No timeless product prices anywhere.
+- **State:** `schemaVersion: 2` on both sides; forward migration is idempotent and
+  refuses a **newer** schema; the storage key is versioned (`fc27gallery.v2`) with
+  a `fc27gallery.v0.bak` backup and a non-blocking 4 MB size warning (T-18/T-22).
+- **Import:** goes through a preview/diff with `verified`/`estimated` provenance
+  and a manual-guard so hand-edited fields are never overwritten without
+  confirmation (T-21).
+- **Hardening:** SSRF allow-list, traversal guard, size cap, method allow-list and
+  security headers (T-19) **plus** ENV kill-switch, rate limit, directory
+  containment and `no-store` (T-20).
+- Engine mirror: `tools/sync_engine.py --check` → byte-identical, **49409** bytes,
+  exports line included (`priceOf` now scenario-aware); both the inline script and
+  `engine/engine.js` pass `node --check`.
