@@ -1,0 +1,803 @@
+{
+  "dataset": {
+    "sets": 127,
+    "cards": 3000
+  },
+  "timeout_s": 30.0,
+  "first_calc": {
+    "ms": 2425.6,
+    "timed_out": false,
+    "budget_ms": 2500,
+    "optimality": "node_limit",
+    "universe": 2400,
+    "chosen": 1
+  },
+  "objective_change": {
+    "ms": 2296.5,
+    "timed_out": false
+  },
+  "small_replan": {
+    "ms": 528.4,
+    "timed_out": false,
+    "budget_ms": 600
+  },
+  "split": {
+    "portfolioWorld_ms": 1444.1,
+    "portfolio_unbudgeted_ms": 10238.7,
+    "portfolio_unbudgeted_optimality": "node_limit",
+    "per_set_sweep_ms": 282512.4,
+    "per_set_sweep_sets": 127,
+    "per_set_sweep_timed_out": 0,
+    "per_set": [
+      {
+        "set": "g000",
+        "ms": 32.4,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g001",
+        "ms": 2467.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g002",
+        "ms": 2560.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g003",
+        "ms": 2035.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g004",
+        "ms": 2679.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g005",
+        "ms": 2683.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g006",
+        "ms": 1925.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g007",
+        "ms": 2622.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g008",
+        "ms": 2697.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g009",
+        "ms": 2084.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g010",
+        "ms": 2559.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g011",
+        "ms": 2596.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g012",
+        "ms": 1918.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g013",
+        "ms": 2614.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g014",
+        "ms": 2596.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g015",
+        "ms": 103.6,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g016",
+        "ms": 2615.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g017",
+        "ms": 2629.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g018",
+        "ms": 2022.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g019",
+        "ms": 2519.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g020",
+        "ms": 2639.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g021",
+        "ms": 1996.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g022",
+        "ms": 2467.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g023",
+        "ms": 2558.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g024",
+        "ms": 1809.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g025",
+        "ms": 2472.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g026",
+        "ms": 2488.5,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g027",
+        "ms": 1848.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g028",
+        "ms": 2498.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g029",
+        "ms": 2632.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g030",
+        "ms": 86.7,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g031",
+        "ms": 2500.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g032",
+        "ms": 2612.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g033",
+        "ms": 1874.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g034",
+        "ms": 2456.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g035",
+        "ms": 2550.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g036",
+        "ms": 1852.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g037",
+        "ms": 2530.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g038",
+        "ms": 2746.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g039",
+        "ms": 2007.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g040",
+        "ms": 2486.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g041",
+        "ms": 2646.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g042",
+        "ms": 1902.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g043",
+        "ms": 2463.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g044",
+        "ms": 2563.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g045",
+        "ms": 83.2,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g046",
+        "ms": 2460.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g047",
+        "ms": 2626.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g048",
+        "ms": 1869.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g049",
+        "ms": 2487.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g050",
+        "ms": 2644.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g051",
+        "ms": 1753.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g052",
+        "ms": 2466.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g053",
+        "ms": 2680.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g054",
+        "ms": 2040.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g055",
+        "ms": 2598.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g056",
+        "ms": 2789.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g057",
+        "ms": 2021.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g058",
+        "ms": 2479.5,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g059",
+        "ms": 2656.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g060",
+        "ms": 141.0,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g061",
+        "ms": 2591.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g062",
+        "ms": 2688.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g063",
+        "ms": 2007.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g064",
+        "ms": 2656.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g065",
+        "ms": 2726.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g066",
+        "ms": 1867.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g067",
+        "ms": 2560.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g068",
+        "ms": 2764.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g069",
+        "ms": 1883.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g070",
+        "ms": 2454.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g071",
+        "ms": 2647.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g072",
+        "ms": 1814.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g073",
+        "ms": 2534.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g074",
+        "ms": 2711.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g075",
+        "ms": 77.3,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g076",
+        "ms": 2474.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g077",
+        "ms": 2603.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g078",
+        "ms": 1870.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g079",
+        "ms": 2440.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g080",
+        "ms": 2821.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g081",
+        "ms": 1846.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g082",
+        "ms": 2519.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g083",
+        "ms": 2607.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g084",
+        "ms": 1798.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g085",
+        "ms": 2564.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g086",
+        "ms": 2609.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g087",
+        "ms": 1840.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g088",
+        "ms": 2487.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g089",
+        "ms": 2659.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g090",
+        "ms": 88.1,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g091",
+        "ms": 2553.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g092",
+        "ms": 2645.5,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g093",
+        "ms": 1869.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g094",
+        "ms": 2467.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g095",
+        "ms": 2611.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g096",
+        "ms": 1817.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g097",
+        "ms": 2458.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g098",
+        "ms": 2565.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g099",
+        "ms": 2022.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g100",
+        "ms": 2617.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g101",
+        "ms": 2511.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g102",
+        "ms": 1845.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g103",
+        "ms": 2452.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g104",
+        "ms": 2622.3,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g105",
+        "ms": 80.9,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g106",
+        "ms": 2448.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g107",
+        "ms": 2658.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g108",
+        "ms": 1851.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g109",
+        "ms": 2482.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g110",
+        "ms": 2550.5,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g111",
+        "ms": 1759.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g112",
+        "ms": 2538.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g113",
+        "ms": 2560.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g114",
+        "ms": 1874.2,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g115",
+        "ms": 2579.4,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g116",
+        "ms": 2543.0,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g117",
+        "ms": 2014.1,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g118",
+        "ms": 2471.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g119",
+        "ms": 2664.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g120",
+        "ms": 146.1,
+        "timed_out": false,
+        "optimality": "proved"
+      },
+      {
+        "set": "g121",
+        "ms": 2546.6,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g122",
+        "ms": 2700.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g123",
+        "ms": 2064.7,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g124",
+        "ms": 2689.9,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g125",
+        "ms": 2626.5,
+        "timed_out": false,
+        "optimality": "node_limit"
+      },
+      {
+        "set": "g126",
+        "ms": 1885.8,
+        "timed_out": false,
+        "optimality": "node_limit"
+      }
+    ]
+  },
+  "targets": {
+    "first_calc_ms": 3000.0,
+    "subseq_ms": 100.0,
+    "first_calc_met": true,
+    "subseq_measured_by": "tools/bench_browser.py"
+  },
+  "node": "v22.22.2"
+}

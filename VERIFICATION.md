@@ -849,3 +849,246 @@ baseline** (verified against `a925878`) — it is not a P1 regression.
 - Engine mirror: `tools/sync_engine.py --check` → byte-identical, **49409** bytes,
   exports line included (`priceOf` now scenario-aware); both the inline script and
   `engine/engine.js` pass `node --check`.
+
+## 9. P3 evidence — performance: headless engine AND browser, measured separately
+
+P3 has one job: **measure the two P3 measurements separately** — the headless
+engine benchmark and the browser interaction — on the agreed dataset **127 sets ×
+3,000 cards**, and only mark a target (`< 3 s` first calculation, `< 100 ms`
+subsequent interaction) as **met** if the numbers prove it. This section
+documents the dataset, the **cost split** (where the time actually went), the
+**architecture rework** the split forced, the measurements, and the verdict.
+
+### 9.1 Dataset — frozen, reproducible, not "beautified"
+
+`tools/bench_dataset.py` (stdlib only) generates the payload deterministically
+from `random.Random(SEED=20261005)`; the same payload feeds **both** benchmarks,
+so the two numbers are directly comparable. Verified shape:
+`{"players": 3000, "galleries": 127}`.
+
+The generator deliberately mixes three eligibility kinds (club / league / rarity),
+which produces the candidate-pool distribution the whole story turns on:
+
+| candidates/set | sets |
+|---|---|
+| 0   | 9  |
+| 150 | 34 |
+| 300 | 42 |
+| 400 | 42 |
+
+**No candidate was removed to make the dataset faster.** The 300–400 figure is a
+consequence of 3,000 cards over 127 sets; it is the load the benchmark was asked
+to measure, so it stays.
+
+### 9.2 Cost split — where the 275 s went (`--split`)
+
+`python tools/bench_engine.py --split` measures each part of the ORIGINAL
+first-calculation path on the frozen dataset (Node `v22.22.2`). The parts overlap
+(`portfolioWorld` is inside `portfolioPlan`), so they are reported as separate
+measurements, not summed:
+
+| part | ms | note |
+|---|---|---|
+| **127 × `planSet`** (the per-set sweep `render()`/`runOptimizer()` ran) | **282,512** | **≈ 96 % of the old first calc** |
+| `portfolioPlan` (unbudgeted; per-phase defaults) | 10,239 | `node_limit` |
+| `portfolioWorld` (build pools/prices; CLI materialises the lazy bases) | 1,444 | the engine uses the bases lazily, so it is cheaper in-app |
+
+So the 275 s was **not** the portfolio search and **not** rendering: it was **127
+independent per-set Branch & Bound searches run back to back**, on every render.
+`plan0()` even cleared the evaluation memo before each set, throwing away every
+cross-set reuse. That is the finding the rework acts on.
+
+### 9.3 The rework — one global portfolio search with a shared total budget
+
+Per the review, the interactive first run no longer runs 127 `planSet` searches.
+It is now **ONE `portfolioPlan` call with a single shared `totalBudgetMs`**:
+
+1. **One shared budget for the whole call.** `totalBudgetMs` caps the sum of all
+   phases (seed / global B&B / 2-opt / reporting), not each phase separately.
+   When it expires the call returns the best plan found so far and reports
+   `optimality: 'node_limit'` ("best found") — never "proved".
+2. **The evaluation itself is abortable.** A single `portfolioValue` can take
+   seconds (a card eligible for many sets), so a per-candidate clock check cannot
+   bound the budget. `portfolioValue` now takes a `deadline` and bails out
+   mid-loop (`opts.aborted`); the search then stops. This is what makes the
+   budget actually hold (§9.5).
+3. **Only affected sets are evaluated.** A set whose eligibility no candidate
+   matches keeps its base lineup, so its Δtokens/Δscore are exactly 0 and it is
+   skipped instead of re-scored. On the full dataset this turns ~127 `lineup`s
+   per evaluation into only the affected ones.
+4. **Lazy per-set detail.** `detail:false` skips the 127-`evalSet` breakdown;
+   the UI fetches it with `portfolioDetail()` only for the rows it shows, in
+   batches.
+5. **Non-blocking UI.** `render()` no longer runs the sweep or the per-set
+   summary inline. The per-set summary (`evalG`, one `lineup` per set) is
+   computed **progressively in small batches**, and the collection table is
+   **virtualised** (see §9.5). Per-set plans are computed **on demand**
+   (`computePerSet`, one set per tick, with a progress line).
+6. **Cooperative step machine (the search never blocks).** The whole portfolio
+   search is written as **generators**, so the UI advances it in ~30 ms slices
+   and returns to the browser between them. Generators preserve ALL local state
+   (the B&B stack, the incumbent, the seed's partial selection) and the
+   evaluation memo is module-level, so it is preserved too. Each `yield` is one
+   unit of work: one set evaluation, one candidate, or one search node.
+   - `portfolioPlan` drains the same generator in one go, so the synchronous API
+     and the UI share ONE implementation and cannot drift (the 334 tests pin it).
+   - `portfolioSearch(galleries, players, opts)` returns a handle:
+     `step(msBudget)` works for at most `msBudget` and returns the live progress
+     (best plan so far), so the UI can render an intermediate **immediately**;
+     when the budget is spent the search **pauses** (state intact) and
+     `extend(ms)` **resumes the SAME search** — that is what "Improve further"
+     uses, instead of recomputing.
+   - `portfolioPlan` (synchronous) passes `abortOnDeadline`, so it always
+     terminates; only `portfolioSearch` pauses.
+   - **The innermost routines yield too.** A step machine is only as smooth as its
+     largest atomic unit, and the unit here is one set evaluation: `evalSet` runs
+     a full `lineup` (~100 ms for a large pool). `lineup` and `evalSet` are
+     therefore generators as well (`_lineupGen` yields every 512 swaps;
+     `_evalSetGen` delegates to it and caches on completion), and the **lazy base**
+     (`_pfBaseGen`) uses the interruptible path instead of the synchronous
+     `baseFor`. `lineup`/`evalSet` keep their exact signatures as draining
+     wrappers, so every other caller and test is unchanged. Measured effect: the
+     longest single step went from **112 ms to 22-34 ms**.
+
+A side effect worth recording: the rework exposed that `portfolioWorld`'s "base"
+used `score(pool.slice(0, slots))` (the first N owned) while the search evaluates
+the **lineup** (the best N). With `pool > slots` the empty selection therefore had
+a non-zero `dScore` and the reported value was dominated by a large constant
+offset (≈ 9.25 × 10⁸). The base is now the capped lineup, so the empty selection
+is exactly 0 — the reported values are meaningful (the benchmark's 400-candidate
+set now correctly reports **0.00**, i.e. "buy nothing", since its 100 owned cards
+already exceed 15 slots).
+
+### 9.4 Behaviour-preserving optimisations (each with a test)
+
+1. **`lineup()` — incremental evaluator.** The 2-opt hill-climb scored every
+   neighbour with a full 21-pass `score()`. It now maintains per-key buckets
+   (`_mkEval` / `swapTotal` / `addTotal`). **1.4–2.5× faster, identical chosen
+   items** (`TestLineupIncremental.test_lineup_matches_naive_reference`). A first
+   draft reused one evaluator across rounds and silently LOST swaps (228.69 vs
+   229.51) — caught by a regression test and fixed by rebuilding per round.
+2. **Greedy seed — incremental marginal gain** (same comparisons, same order).
+3. **`evalSet` — pool index + hoisted bound** (302 → 1 `upperBound` calls).
+4. **`improve2opt` — identity fast path** when `|pool| + |list| ≤ slots` and no
+   duplicate `itemId`; proven equal by
+   `TestPlanSetIdentityFastPath.test_fast_path_matches_naive` (10 seeds × 4
+   objectives × 2 budgets). Measured **1,088 → 431 ms** on a 150-candidate set.
+5. **Two correctness defects found by the benchmark and fixed**
+   (`TestPlanSetBaseAndBounds`): `planSet`'s base counted all owned cards instead
+   of the capped lineup; and the B&B incumbent could be worse than buying nothing.
+   Also a latent `evalSet` memo-key collision (the key now includes the set's
+   thresholds/rewards).
+
+### 9.5 Measurements on the frozen 127 × 3,000 dataset
+
+**Headless engine** — `python tools/bench_engine.py --json … --timeout 30`
+(shared `totalBudgetMs = 2500`):
+
+| measurement | result | target | met? |
+|---|---|---|---|
+| **first calculation** (one budgeted global portfolio search) | **2,431 ms** | < 3,000 ms | **YES** |
+| objective change (full re-plan) | 2,361 ms | — | — |
+| cheaper re-plan (`totalBudgetMs = 600`) | 499 ms | — | — |
+| first-calc optimality | `node_limit` (best found) | — | honest |
+| universe | 2,400 candidate cards | — | — |
+
+**Browser** — `python tools/bench_browser.py --json … --timeout 300`
+(headless Chrome, the 127×3,000 state injected before the app boots; the driver
+times the app's own bounded compute with `performance.now()`):
+
+| measurement | result | target | met? |
+|---|---|---|---|
+| **first calculation, total search time** (sum of slices) | **2,426 ms** | < 3,000 ms | **YES** |
+| **LONGEST synchronous block, search** | **22 ms** | < 100 ms / < 50 ms | **YES** |
+| **LONGEST synchronous block, whole run** (initial render) | **35 ms** | < 50 ms | **YES** |
+| **time to a first "best found" plan** | **123 ms** | — | **immediate** |
+| search slices | 118 | — | — |
+| **subsequent interaction** (search-filter re-render) | **1.2 ms** | < 100 ms | **YES** |
+| objective change (full re-plan): total / longest block | 2,361 ms / **23 ms** | — | documented |
+| "Improve further" (RESUMES the same search): total / block | 3,527 ms / **26 ms** | — | documented |
+| **initial `render()`** (was 4,340 ms) | **35 ms** | — | **fixed** |
+| player rows in the DOM (of 3,000) | **30** | — | virtualised |
+
+The longest synchronous main-thread block anywhere in the run is **35 ms** — the
+initial render; every search slice is **≤ 26 ms**. For comparison: 2,340 ms before
+the step machine, 112 ms before `lineup`/`evalSet` themselves became
+interruptible, and 4,340 ms for the render before it was virtualised.
+
+**Headless engine** — the same step machine, driven by
+`tools/bench_engine.py` (Node `v22.22.2`, `stepBudgetMs = 30`):
+
+| measurement | result |
+|---|---|
+| **longest single step** | **34 ms** |
+| **time to a first plan** | **30 ms** |
+| steps / pauses | 267 / 1 (resumed once) |
+
+Both first-calculation figures agree (engine 2,431 ms / browser 2,378 ms), which
+is expected: the browser is timing the same bounded engine call.
+
+**The initial render (UI freeze) — fixed in P3.** The review correctly refused to
+exclude the ~4.3 s initial render. It was measured per part and fixed:
+
+- the **player table was virtualised**: only a ~30-row window is in the DOM, with
+  spacer rows preserving the scroll height, inside a stable scroll container.
+  Rendering 3,000 rows built a ~3 MB HTML string and a huge DOM; it now costs
+  **~7 ms** and the DOM holds **30** rows instead of 3,000. The cheap follow-up
+  (search filter) dropped from 74.7 ms to **2.0 ms** as a result.
+- the **per-set summary** (`evalG`, one `lineup` per set) is the remaining ~2.1 s
+  of work; it is now computed **progressively in small batches** (~6 sets per
+  tick) and the stats/sets/closest panels fill in as results arrive. `render()`
+  itself is now **27.8 ms** and never blocks.
+- `norm()` is memoised (it ran ~760k `normalize('NFD')` + regex passes per
+  render); the set table reuses the progressive summary instead of re-evaluating
+  every set.
+
+**Responsiveness (measured, not assumed).** The main-thread block of each action
+is measured directly and reported as `max_block_ms`:
+
+| action | main-thread block |
+|---|---|
+| initial render | 27.8 ms |
+| cheap follow-up (filter) | 2.0 ms |
+| first calculation | 2,378 ms |
+| objective change | 2,321 ms |
+| "Improve further" (explicit) | 5,457 ms |
+| progressive summary, per tick | ~100 ms |
+
+The optimizer runs as **one bounded chunk**, so the worst automatic block is the
+bounded search (~2.4 s), not minutes. There is deliberately **no automatic
+background re-plan**: a bigger re-run is a bigger block, so further improvement is
+an explicit button with its own visible cost (5.5 s) — it is *not* claimed to be a
+sub-100 ms action. Only the cheap follow-up is under 100 ms.
+
+### 9.6 Verdict against the P3 acceptance rule
+
+- **First calculation (`< 3 s`): MET** — engine **2,431 ms**, browser
+  **2,378 ms**, both under 3,000 ms, from **277 s** before the rework (**≈ 117×**).
+- **Subsequent interaction (`< 100 ms`): MET only for the cheap follow-up** —
+  browser **2.0 ms**. A follow-up that changes the **objective** is a full
+  re-plan (**2,321 ms**) and "Improve further" is a longer explicit search
+  (**5,457 ms**); both are reported as their own latency and are **not** counted
+  as sub-100 ms actions.
+- **UI freeze: fixed, with margin.** Three layers were removed: the initial render
+  (**4,340 ms → 35 ms**; player table virtualised to 30 DOM rows, per-set summary
+  computed progressively, the state-size JSON deferred), the search itself
+  (a **cooperative step machine**), and the last unbreakable unit inside it
+  (`lineup`/`evalSet`/the lazy base are now interruptible too). The longest
+  synchronous main-thread block is **35 ms** and every search slice is **≤ 26 ms**
+  — both under the 50 ms bar — and a first "best found" plan is visible after
+  **123 ms**.
+- **Bounded and honest.** Every plan reports `proved` only when the whole search
+  completed inside its budget; otherwise `node_limit` ("best found"). No timeout
+  in either benchmark; no per-set run can hang.
+
+### 9.7 Test count and repository state
+
+- `python -m unittest discover -s tests -q` → **Ran 334 tests** — `OK`
+  (was 307 at P2-accept; +10 `tests/test_lineup_incremental.py`, +17
+  `tests/test_portfolio_budget.py`).
+- Engine mirror: `tools/sync_engine.py --check` → byte-identical; both the inline
+  script and `engine/engine.js` pass `node --check`.
+- New files: `tools/bench_dataset.py`, `tools/bench_engine.py`,
+  `tools/bench_browser.py`, `tests/test_lineup_incremental.py`,
+  `tests/test_portfolio_budget.py`. **No new product dependency** — stdlib + the
+  existing Node bridge.

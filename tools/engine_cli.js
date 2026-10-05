@@ -32,6 +32,8 @@ const FN = {
   candidatesFor: eng.candidatesFor,
   evalSet: eng.evalSet,
   evalMemoReset: () => { eng.evalMemoReset(); return true; },
+  searchStats: () => eng.searchStats(),
+  searchStatsReset: () => { eng.searchStatsReset(); return true; },
   gain1: eng.gain1,
   objectiveValue: eng.objectiveValue,
   improve2opt: eng.improve2opt,
@@ -43,25 +45,60 @@ const FN = {
   bbValue: eng.bbValue,
   branchAndBound: eng.branchAndBound,
   portfolioPlan: (galleries, players, opts) => eng.portfolioPlan(galleries, players, opts),
+  // Drive the cooperative search to completion in slices and report the slice
+  // statistics (how many steps, the longest slice) -- used by the tests.
+  portfolioSearch: (galleries, players, opts) => {
+    // Drive the cooperative search in slices and report the slice statistics.
+    // `resumeMs`/`maxPauses` let a caller simulate "Improve further" (extend the
+    // SAME search) without letting it run unbounded.
+    opts = opts || {};
+    const budget = +opts.stepBudgetMs > 0 ? +opts.stepBudgetMs : 40;
+    const resumeMs = +opts.resumeMs > 0 ? +opts.resumeMs : 0;
+    const maxPauses = +opts.maxPauses >= 0 ? +opts.maxPauses : (resumeMs ? 1 : 0);
+    const s = eng.portfolioSearch(galleries, players, opts);
+    let steps = 0, maxStep = 0, firstPlanMs = null, pauses = 0;
+    const t0 = Date.now();
+    let r = s.step(budget);
+    while (!r.done) {
+      if (firstPlanMs === null && r.progress && r.progress.best && r.progress.best.length) firstPlanMs = Date.now() - t0;
+      if (r.paused) {
+        if (pauses >= maxPauses) break;
+        pauses++; s.extend(resumeMs);
+      }
+      const a = Date.now();
+      r = s.step(budget);
+      const dt = Date.now() - a;
+      steps++;
+      if (dt > maxStep) maxStep = dt;
+    }
+    const prog = r.progress || {};
+    return { done: !!r.done, paused: !!r.paused, plan: r.plan || null,
+             bestValue: prog.value, bestCards: (prog.best || []).length, phase: prog.phase,
+             steps, maxStepMs: maxStep, totalMs: Date.now() - t0, firstPlanMs, pauses };
+  },
+  portfolioDetail: (galleries, players, opts, chosenIds) => eng.portfolioDetail(galleries, players, opts, chosenIds),
   portfolioBrute: (galleries, players, opts) => eng.portfolioBrute(galleries, players, opts),
   portfolioWorld: (galleries, players, opts) => {
     const w = eng.portfolioWorld(galleries, players, opts || {});
     // Return a JSON-friendly view: drop the Map/Set containers but expose the
     // candidate cards, per-set pools/bases and each card's eligible setIds.
+    // `bases` is lazy inside the engine (built on first use), so materialise it
+    // here -- the CLI contract is a plain, fully-populated array.
     const prices = {};
     for (const [id, rec] of w.prices) prices[id] = { card: rec.card, setIds: [...rec.setIds] };
-    return { pools: w.pools, bases: w.bases, prices, cands: w.cands };
+    const bases = w.gs.map((_, i) => w.baseFor(i));
+    return { pools: w.pools, bases, prices, cands: w.cands };
   },
   portfolioValue: (galleries, players, opts, ids) => {
     const w = eng.portfolioWorld(galleries, players, opts || {});
     const idSet = new Set(ids || []);
     const S = w.cands.filter(c => idSet.has(c.itemId || c.id));
     const budget = Math.max(0, (+(opts && opts.coins != null ? opts.coins : Infinity)) - (+(opts && opts.reserve) || 0));
-    return eng.portfolioValue(w.gs, w.pools, w.prices, S, { objective: (opts && opts.objective) || 'eff', taxRate: opts && opts.taxRate, budget, bases: w.bases });
+    return eng.portfolioValue(w.gs, w.pools, w.prices, S, { objective: (opts && opts.objective) || 'eff', taxRate: opts && opts.taxRate, budget, bases: w.bases, baseFor: w.baseFor, universes: w.universes });
   },
   portfolioUpperBound: (galleries, players, opts) => {
     const w = eng.portfolioWorld(galleries, players, opts || {});
-    return eng.portfolioUpperBound(w.gs, w.pools, w.prices, Object.assign({ bases: w.bases }, opts || {}));
+    return eng.portfolioUpperBound(w.gs, w.pools, w.prices, Object.assign({ bases: w.bases, baseFor: w.baseFor, universes: w.universes }, opts || {}));
   },
   sanScore: eng.sanScore,
   TAG: () => eng.TAG
@@ -79,6 +116,7 @@ function handle(req) {
   if (req.fn === 'planSet' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
   if (req.fn === 'plan' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
   if (req.fn === 'portfolioPlan' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
+  if (req.fn === 'portfolioDetail' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
   if (req.fn === 'portfolioBrute' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
   if (req.fn === 'portfolioUpperBound' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });
   if (req.fn === 'portfolioWorld' && args[2] && Array.isArray(args[2].collectedIds)) args[2] = Object.assign({}, args[2], { collectedIds: new Set(args[2].collectedIds) });

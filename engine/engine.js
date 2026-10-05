@@ -146,6 +146,123 @@ function score(items, opts) {
   return { base, bonus: bonusTotal, total: base + bonusTotal, tags: b };
 }
 
+// ---- Incremental evaluator for lineup's hill-climb (P3.2) ---------------------
+// `lineup` scores every one-slot swap of the current n items: n*pool*rounds
+// evaluations, each a full 21-pass `score()` in the naive form -- the dominant
+// cost of a large-pool plan. This keeps the SAME arithmetic as `score()` but
+// maintains per-key aggregates, so one tag value costs O(bucket) instead of
+// O(items). Every function here returns EXACTLY what the corresponding `score()`
+// path returns: the equivalence is asserted in tests/test_lineup_incremental.py
+// over random and adversarial pools (including negative/NaN scores, empty keys,
+// multi-item buckets and the top-10 cut). So lineup explores the same neighbour
+// values and therefore makes the same choices -- it is a pure speed-up.
+function _mkEval(items) {
+  const base = items.reduce((s, p) => s + sanScore(p.score), 0);
+  const contrib = items.map(p => sanScore(p.score));
+  // Buckets for group tags and "best item per key" for distinct tags.
+  const gNation = new Map(), gClub = new Map(), gLeague = new Map();
+  const dNation = new Map(), dClub = new Map(), dLeague = new Map();
+  const multi = new Map();
+  const flat = {
+    bronze: [], silver: [], gold: [], holographic: [], icon: [], hero: [], totw: [],
+    first: [], gk: [], wf: [], skills: [], def: [], mid: [], att: [],
+  };
+  const pushFlat = p => {
+    if (p.rarity === 'Bronze') flat.bronze.push(p);
+    if (p.rarity === 'Silver') flat.silver.push(p);
+    if (p.rarity === 'Gold') flat.gold.push(p);
+    if (p.holographic) flat.holographic.push(p);
+    if (p.special === 'Icon') flat.icon.push(p);
+    if (p.special === 'Hero' || p.special === 'Heroic') flat.hero.push(p);
+    if (p.special === 'TOTW' || p.special === 'Team of the Week') flat.totw.push(p);
+    if (p.firstOwner) flat.first.push(p);
+    if (p.position === 'GK') flat.gk.push(p);
+    if (+p.weakFoot >= 5) flat.wf.push(p);
+    if (+p.skillMoves >= 5) flat.skills.push(p);
+    if (['CB', 'LB', 'RB'].includes(p.position)) flat.def.push(p);
+    if (['CDM', 'CM', 'CAM', 'LM', 'RM'].includes(p.position)) flat.mid.push(p);
+    if (['ST', 'LW', 'RW'].includes(p.position)) flat.att.push(p);
+  };
+  const removeFrom = (bucket, p) => {
+    const i = bucket.indexOf(p);
+    if (i >= 0) bucket.splice(i, 1);
+  };
+  const unflat = p => {
+    removeFrom(flat.bronze, p); removeFrom(flat.silver, p); removeFrom(flat.gold, p);
+    removeFrom(flat.holographic, p); removeFrom(flat.icon, p); removeFrom(flat.hero, p);
+    removeFrom(flat.totw, p); removeFrom(flat.first, p); removeFrom(flat.gk, p);
+    removeFrom(flat.wf, p); removeFrom(flat.skills, p); removeFrom(flat.def, p);
+    removeFrom(flat.mid, p); removeFrom(flat.att, p);
+  };
+  const addTo = (map, key, p) => { if (!key) return; let a = map.get(key); if (!a) { a = []; map.set(key, a); } a.push(p); };
+  const delFrom = (map, key, p) => { if (!key) return; const a = map.get(key); if (!a) return; const i = a.indexOf(p); if (i >= 0) a.splice(i, 1); if (!a.length) map.delete(key); };
+  const addItem = p => {
+    addTo(gNation, p.nation, p); addTo(gClub, p.club, p); addTo(gLeague, p.league, p);
+    addTo(dNation, p.nation, p); addTo(dClub, p.club, p); addTo(dLeague, p.league, p);
+    const mk = p.playerKey || p.name; if (mk) { let a = multi.get(mk); if (!a) { a = []; multi.set(mk, a); } a.push(p); }
+    pushFlat(p);
+  };
+  const delItem = p => {
+    delFrom(gNation, p.nation, p); delFrom(gClub, p.club, p); delFrom(gLeague, p.league, p);
+    delFrom(dNation, p.nation, p); delFrom(dClub, p.club, p); delFrom(dLeague, p.league, p);
+    const mk = p.playerKey || p.name; if (mk) { const a = multi.get(mk); if (a) { const i = a.indexOf(p); if (i >= 0) a.splice(i, 1); if (!a.length) multi.delete(mk); } }
+    unflat(p);
+  };
+  const b = [];
+  const add = x => { if (x > 0) b.push(x); };
+  const recomputeBonus = () => {
+    b.length = 0;
+    if (gNation.size) { let best = 0; for (const a of gNation.values()) { const v = bonus(a, pct('sameNation', a.length)); if (v > best) best = v; } add(best); }
+    if (dNation.size) { const a = []; for (const arr of dNation.values()) { let top = arr[0]; for (const x of arr) if (+x.score > +top.score) top = x; a.push(top); } add(bonus(a, pct('differentNation', a.length))); }
+    if (gClub.size) { let best = 0; for (const a of gClub.values()) { const v = bonus(a, pct('sameClub', a.length)); if (v > best) best = v; } add(best); }
+    if (dClub.size) { const a = []; for (const arr of dClub.values()) { let top = arr[0]; for (const x of arr) if (+x.score > +top.score) top = x; a.push(top); } add(bonus(a, pct('differentClub', a.length))); }
+    if (gLeague.size) { let best = 0; for (const a of gLeague.values()) { const v = bonus(a, pct('sameLeague', a.length)); if (v > best) best = v; } add(best); }
+    if (dLeague.size) { const a = []; for (const arr of dLeague.values()) { let top = arr[0]; for (const x of arr) if (+x.score > +top.score) top = x; a.push(top); } add(bonus(a, pct('differentLeague', a.length))); }
+    add(bonus(flat.bronze, pct('bronze', flat.bronze.length)));
+    add(bonus(flat.silver, pct('silver', flat.silver.length)));
+    add(bonus(flat.gold, pct('gold', flat.gold.length)));
+    add(bonus(flat.holographic, pct('holographic', flat.holographic.length)));
+    add(bonus(flat.icon, pct('icon', flat.icon.length)));
+    add(bonus(flat.hero, pct('hero', flat.hero.length)));
+    add(bonus(flat.totw, pct('totw', flat.totw.length)));
+    add(bonus(flat.first, pct('first', flat.first.length)));
+    add(bonus(flat.gk, pct('gk', flat.gk.length)));
+    for (const a of multi.values()) add(bonus(a, pct('multi', a.length)));
+    add(bonus(flat.wf, pct('wf', flat.wf.length)));
+    add(bonus(flat.skills, pct('skills', flat.skills.length)));
+    add(bonus(flat.def, pct('def', flat.def.length)));
+    add(bonus(flat.mid, pct('mid', flat.mid.length)));
+    add(bonus(flat.att, pct('att', flat.att.length)));
+    b.sort((x, y) => y - x);
+    const paying = Number.isFinite(DEFAULT_COUNT_TOP_TAGS) ? b.slice(0, DEFAULT_COUNT_TOP_TAGS) : b.slice();
+    return paying.reduce((s, v) => s + v, 0);
+  };
+  items.forEach(addItem);
+  let bonusTotal = recomputeBonus();
+  return {
+    // Total of `items` with slot `i` replaced by `p` (p need not be in the set).
+    swapTotal(i, p, cur) {
+      const old = cur[i];
+      const newBase = base - contrib[i] + sanScore(p.score);
+      delItem(old); addItem(p);
+      const nb = recomputeBonus();
+      delItem(p); addItem(old); // restore
+      return newBase + nb;
+    },
+    // Total of `items + p` where `p` is NOT already in `items`. Used by the
+    // greedy seed (a pool member is added, never swapped). Same arithmetic as
+    // score(items.concat([p])), but incremental: O(bucket) instead of a full
+    // 21-tag pass over the whole item list.
+    addTotal(p) {
+      addItem(p);
+      const nb = recomputeBonus();
+      delItem(p); // restore
+      return base + sanScore(p.score) + nb;
+    },
+  };
+}
+
+
 // Eligibility of a card for a set. Tolerant string comparison via norm().
 function eligible(p, g) {
   const e = g.eligibility || {};
@@ -158,9 +275,17 @@ function eligible(p, g) {
 }
 
 // Normalization for tolerant name/type comparison (accents, club prefixes, aliases).
+// P3: memoised. `eligible()` calls it twice per (card, set) pair, so a 3,000-card
+// x 127-set render ran ~760k `normalize('NFD')` + regex passes and took ~2.4 s.
+// The inputs are a small, highly repetitive set of strings (clubs, leagues,
+// rarities), so a cache makes it effectively free. `norm` is pure.
+const _normCache = new Map();
 function norm(s) {
   if (s == null) return '';
-  let t = String(s).toLowerCase().trim();
+  const raw = String(s);
+  const hit = _normCache.get(raw);
+  if (hit !== undefined) return hit;
+  let t = raw.toLowerCase().trim();
   t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // strip accents
   const alias = {
     'team of the week': 'totw',
@@ -169,10 +294,15 @@ function norm(s) {
     'holographics': 'holographic',
     'holographic': 'holographic'
   };
-  if (alias[t]) return alias[t];
-  // Drop common club suffixes/prefixes so "Málaga CF" == "Malaga CF".
-  t = t.replace(/\b(fc|cf|sc|ac|afc|club|de futbol|futbol)\b/g, ' ');
-  return t.replace(/\s+/g, ' ').trim();
+  let out;
+  if (alias[t]) out = alias[t];
+  else {
+    // Drop common club suffixes/prefixes so "Málaga CF" == "Malaga CF".
+    t = t.replace(/\b(fc|cf|sc|ac|afc|club|de futbol|futbol)\b/g, ' ');
+    out = t.replace(/\s+/g, ' ').trim();
+  }
+  if (_normCache.size < 100000) _normCache.set(raw, out);
+  return out;
 }
 
 // Best lineup of <= n items. Greedy seed + hill-climb swap. Deterministic.
@@ -183,7 +313,13 @@ function norm(s) {
 //   a missing itemId -- never the canonical player identity.
 // The pool is de-duped by itemId first, so no two lineup items share a card.
 // Two items of the same player (same playerKey) are allowed and both kept.
-function lineup(pool, n) {
+// `lineup` is the hot inner routine (n x |pool| `swapTotal` calls per round, 5
+// rounds). It is written as a GENERATOR so the cooperative search can yield
+// INSIDE a single expensive set evaluation -- otherwise one large pool (~100 ms)
+// would still be one unbreakable block. The synchronous `lineup` below drains it,
+// so every existing caller and test is unchanged.
+const LINEUP_YIELD_EVERY = 512; // swaps between yields (~1-2 ms of work)
+function* _lineupGen(pool, n) {
   const byId = new Map();
   for (const p of pool) {
     const k = p.itemId || p.id;
@@ -194,14 +330,19 @@ function lineup(pool, n) {
   if (pool.length <= n) return { items: pool.slice(), ...score(pool) };
   const cur = pool.slice().sort((a, b) => sanScore(b.score) - sanScore(a.score)).slice(0, n);
   let cs = score(cur).total, curIds = new Set(cur.map(x => x.itemId || x.id));
+  let ticks = 0;
   for (let k = 0; k < 5; k++) {
+    // The neighbour value must be computed against the CURRENT set. Build one
+    // incremental evaluator per round from the committed `cur`; a single ctx
+    // reused across rounds would go stale the moment a swap is committed.
+    const ctx = _mkEval(cur);
     let best = null;
     for (let i = 0; i < n; i++) {
       for (const c of pool) {
         const cid = c.itemId || c.id;
         if (curIds.has(cid)) continue;
-        const t = cur.slice(); t[i] = c;
-        const s = score(t).total;
+        if ((++ticks % LINEUP_YIELD_EVERY) === 0) yield null; // interruptible point
+        const s = ctx.swapTotal(i, c, cur);
         if (s > cs && (!best || s > best.s)) best = { i, c, s };
       }
     }
@@ -212,6 +353,13 @@ function lineup(pool, n) {
     cs = best.s;
   }
   return { items: cur, ...score(cur) };
+}
+// Synchronous drain of the same generator (unchanged behaviour for callers).
+function lineup(pool, n) {
+  const g = _lineupGen(pool, n);
+  let r = g.next();
+  while (!r.done) r = g.next();
+  return r.value;
 }
 
 // Highest grade reached given a score, or null if the set is not yet completable.
@@ -302,6 +450,24 @@ function candidatesFor(g, players, collectedIds) {
 // cannot grow it without limit. `evalMemoReset()` clears it between searches.
 const _evalMemo = new Map();
 const _EVAL_MEMO_MAX = 200000;
+// ---- Search instrumentation (P3.1) ------------------------------------------
+// Cheap counters so a slow plan can be DIAGNOSED instead of guessed at. They
+// have no effect on results. `setUpperBound` is the constant-per-search bound
+// (it depends only on `g` + `evalPool`, never on the node `S`), so
+// `upperBoundCalls` shows how often that whole-pool scan actually happens.
+const _stats = { nodes: 0, upperBoundCalls: 0, evalCalls: 0, evalHits: 0, phase: null, byPhase: {}, byTime: {}, _tPrev: 0 };
+// Dev-time phase timer (P3 instrumentation). `_markPhase` closes the previous
+// phase's wall-clock and opens the next. Cheap and behaviour-neutral.
+function _markPhase(name) {
+  const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  if (_stats.phase && _stats._tPrev) {
+    _stats.byTime[_stats.phase] = (_stats.byTime[_stats.phase] || 0) + (now - _stats._tPrev);
+  }
+  _stats.phase = name;
+  _stats._tPrev = now;
+}
+function searchStatsReset() { _stats.nodes = _stats.upperBoundCalls = _stats.evalCalls = _stats.evalHits = 0; _stats.byPhase = {}; _stats.byTime = {}; _stats.phase = null; _stats._tPrev = 0; }
+function searchStats() { return Object.assign({}, _stats, { memoSize: _evalMemo.size }); }
 function evalMemoReset() { _evalMemo.clear(); }
 // Canonical, order-independent signature of one item as the scorer sees it.
 function _itemSig(x) {
@@ -312,18 +478,61 @@ function _itemSig(x) {
     +x.weakFoot || 0, +x.skillMoves || 0].join('\u0001');
 }
 function _idSetSig(idSet) { return [...idSet].sort().join(','); }
-function evalSet(g, pool, idSet) {
-  const items = pool.filter(p => idSet.has(p.itemId || p.id));
-  // Key = set identity + slots + the resolved items (not just the requested ids).
-  const key = g.id + '|' + (+g.slots || 0) + '|' + _idSetSig(idSet)
+// Signature of the fields `grade()` reads: thresholds and rewards. Two set
+// definitions with the same id/slots but different thresholds must not share a
+// memo entry (they would return each other's grade).
+function _setScoreSig(g) {
+  const t = g.thresholds || {}, r = g.rewards || {};
+  const keys = Object.keys(t).concat(Object.keys(r)).sort();
+  return keys.map(k => k + '=' + (t[k] ?? '') + '/' + (r[k] ?? '')).join(';');
+}
+// `evalSet` is the memoised oracle. It is a GENERATOR too, so a cache MISS (the
+// expensive case: a full `lineup`) is interruptible. The synchronous `evalSet`
+// drains it for every non-cooperative caller.
+function* _evalSetGen(g, pool, idSet) {
+  _stats.evalCalls++;
+  if (_stats.phase) { _stats.byPhase = _stats.byPhase || {}; _stats.byPhase[_stats.phase] = (_stats.byPhase[_stats.phase] || 0) + 1; }
+  const items = _poolItemsFor(pool, idSet);
+  // Key = the set's SCORING identity + slots + the resolved items (not just the
+  // requested ids). `grade()` depends on the thresholds/rewards, so they must be
+  // part of the key: two set definitions sharing an id+slots but differing in
+  // thresholds would otherwise collide and return a stale grade.
+  const key = g.id + '|' + (+g.slots || 0) + '|' + _setScoreSig(g) + '|' + _idSetSig(idSet)
     + '||' + items.map(_itemSig).sort().join('\u0002');
   const hit = _evalMemo.get(key);
-  if (hit !== undefined) return hit;
-  const l = lineup(items, +g.slots || 15);
+  if (hit !== undefined) { _stats.evalHits++; return hit; }
+  const l = yield* _lineupGen(items, +g.slots || 15);
   const r = { score: l.total, base: l.base, bonus: l.bonus, grade: grade(g, l.items.length, l.total), count: items.length };
   if (_evalMemo.size >= _EVAL_MEMO_MAX) _evalMemo.clear();
   _evalMemo.set(key, r);
   return r;
+}
+function evalSet(g, pool, idSet) {
+  const gen = _evalSetGen(g, pool, idSet);
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+// P3.2: index a pool by item identity ONCE and reuse it. `evalSet` is the hot
+// per-node call and previously re-filtered the whole pool (up to ~500 cards) on
+// every invocation; the index turns that scan into a hash lookup per selected id.
+// A WeakMap keyed by the pool ARRAY keeps the cache valid without leaking:
+// callers pass the same stable `evalPool` array for a whole search.
+const _poolIndexCache = new WeakMap();
+function _poolItemsFor(pool, idSet) {
+  let byId = _poolIndexCache.get(pool);
+  if (!byId) {
+    byId = new Map();
+    for (const p of pool) {
+      const k = p.itemId || p.id, prev = byId.get(k);
+      if (!prev || sanScore(p.score) > sanScore(prev.score)) byId.set(k, p);
+    }
+    _poolIndexCache.set(pool, byId);
+  }
+  const out = [];
+  for (const id of idSet) { const p = byId.get(id); if (p !== undefined) out.push(p); }
+  return out;
 }
 
 // Marginal gain of buying item `x` (already in the items list), holding the rest
@@ -365,6 +574,7 @@ function gain1(g, items, x) { return score(items.concat([x])).total - score(item
 // therefore (a) sanitise every score read through `sanScore`, and (b) build the
 // bound from `sanScore` too, so a raw negative cannot make it unsound.
 function setUpperBound(g, pool) {
+  _stats.upperBoundCalls++;
   const n = +g.slots || 15;
   const baseScores = pool.map(p => sanScore(p.score)).sort((a, b) => b - a).slice(0, n);
   let base = 0;
@@ -378,12 +588,25 @@ function bbUpperBound(g, evalPool, S, opts) {
 }
 function bbValue(g, evalPool, S, opts) {
   const idOf = x => x.itemId || x.id;
-  const ids = new Set(evalPool.map(idOf));
   // S is a subset of evalPool; keep only the owned pool + the chosen cards.
   const chosenOnly = new Set((opts.ownedIds || []));
   for (const x of S) chosenOnly.add(idOf(x));
   const ev = evalSet(g, evalPool, chosenOnly);
   const totalLoss = S.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
+  const dTokens = tokens(g, ev.grade) - (opts.baseTokens || 0);
+  const dScore = ev.score - (opts.baseScore || 0);
+  return { value: objectiveValue(opts.objective, dTokens, dScore, totalLoss), loss: totalLoss, dScore, dTokens, score: ev.score };
+}
+// Identical value to `bbValue`, but the B&B hot path passes a search-scoped
+// `ownedSet` (built once) so it does not rebuild a Set of the whole owned pool at
+// every node. Returns the same number -> pruning decisions are unchanged.
+function bbValueFast(g, evalPool, S, opts, ownedSet) {
+  const idOf = x => x.itemId || x.id;
+  const chosenOnly = new Set(ownedSet);
+  for (const x of S) chosenOnly.add(idOf(x));
+  const ev = evalSet(g, evalPool, chosenOnly);
+  let totalLoss = 0;
+  for (const p of S) totalLoss += loss(p, opts.taxRate, opts.priceScenario);
   const dTokens = tokens(g, ev.grade) - (opts.baseTokens || 0);
   const dScore = ev.score - (opts.baseScore || 0);
   return { value: objectiveValue(opts.objective, dTokens, dScore, totalLoss), loss: totalLoss, dScore, dTokens, score: ev.score };
@@ -417,36 +640,69 @@ function branchAndBound(g, pool, unitsNeeded, cands, seed, opts) {
   const seedCost = best.reduce((s, c) => s + priceOf(c.buyPrice, opts.priceScenario), 0);
   if (seedCost > coins) best = [];
   let bestVal = bbValue(g, evalPool, best, bopts).value;
+  // The incumbent must never be WORSE than buying nothing. On a set whose owned
+  // pool already fills (or exceeds) `slots`, the greedy seed can still pick up
+  // cards whose marginal gain does not cover their loss -- a plan with a
+  // negative value. "Buy nothing" is always feasible, so seed the incumbent with
+  // the empty set whenever it dominates. (Found via P3's large-pool benchmark,
+  // where a 75-owned/300-candidate set returned -0.09.)
+  const emptyVal = bbValue(g, evalPool, [], bopts).value;
+  if (emptyVal > bestVal) { best = []; bestVal = emptyVal; }
   let nodes = 0;
-  // `aborted` becomes true as soon as the node cap is hit: the returned plan is
-  // then the BEST FOUND so far, NOT proven optimal. `proved` is its negation.
+  // `aborted` becomes true as soon as a cap is hit: the returned plan is then
+  // the BEST FOUND so far, NOT proven optimal. `proved` is its negation.
   let aborted = false;
   const maxNodes = +opts.maxNodes > 0 ? +opts.maxNodes : 200000;
+  // P3.3: a node cap alone does NOT bound wall-clock -- one node is a full
+  // `evalSet` (up to ~35 ms on a large pool), so 200k nodes could run for hours.
+  // A wall-clock budget bounds the SEARCH (never the candidate pool): when it
+  // trips, `aborted` is set and the caller reports `node_limit`. The default is
+  // generous enough that small sets finish and prove optimality unchanged.
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 1500;
+  const tStart = Date.now();
+  // P3.2: the admissible bound depends ONLY on `g` and the fixed `evalPool`, not
+  // on the node S. Computing it once per search (instead of re-sorting and
+  // re-scoring the whole pool at every node) is both cheaper AND identical: it
+  // is the same number, so pruning decisions are unchanged. `ubTokens` is the
+  // same kind of hoist for `tokens(g,'S')`.
+  const ubScoreCached = setUpperBound(g, evalPool);
+  const ubTokens = tokens(g, 'S');
+  const ownedSet = new Set(bopts.ownedIds || []);
   const rec = (idx, S) => {
     if (aborted) return;
+    _stats.nodes++;
     if (++nodes > maxNodes) { aborted = true; return; }
+    // Wall-clock guard. Checked on EVERY node (Date.now() is negligible next to
+    // one `evalSet`), because a single node can itself take tens of ms on a
+    // large pool -- a coarse "every 512 nodes" check would overshoot badly.
+    if (Date.now() - tStart > budgetMs) { aborted = true; return; }
     // Admissible bound: best possible score from here; if even that cannot beat
     // the incumbent, prune. (buyPrice >= 0, and the objective is monotone in
     // tokens then score, so a score-only bound is valid for every objective.)
-    const ubScore = bbUpperBound(g, evalPool, S, bopts);
-    const ubVal = objectiveValue(opts.objective, tokens(g, 'S') - (opts.baseTokens || 0),
+    const ubScore = ubScoreCached;
+    const ubVal = objectiveValue(opts.objective, ubTokens - (opts.baseTokens || 0),
       ubScore - (opts.baseScore || 0), 0);
     if (ubVal < bestVal) return;
     if (S.length >= maxBundle || idx >= order.length) return;
-    for (let i = idx; i < order.length; i++) {
+    for (let i = idx; i < order.length && !aborted; i++) {
+      // A single candidate probe is an `evalSet`; check the clock here too so a
+      // wide node cannot run past the budget between recursion levels.
+      if ((i & 31) === 0 && Date.now() - tStart > budgetMs) { aborted = true; return; }
       const c = order[i];
       if (baseIdSet.has(idOf(c)) || S.some(x => idOf(x) === idOf(c))) continue;
       const spent = (opts.seedSpend || 0)
         + S.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0) + priceOf(c.buyPrice, opts.priceScenario);
       if (spent > coins) continue; // hard coin-budget constraint
       const S2 = S.concat([c]);
-      const v = bbValue(g, evalPool, S2, bopts).value;
+      // bbValueFast == bbValue, but reuses the search-scoped `ownedSet` instead of
+      // allocating a fresh Set of the whole owned pool at every node.
+      const v = bbValueFast(g, evalPool, S2, bopts, ownedSet).value;
       if (v > bestVal) { bestVal = v; best = S2.slice(); }
       rec(i + 1, S2);
     }
   };
   rec(0, []);
-  return { best, value: bestVal, nodes, aborted, proved: !aborted, maxNodes };
+  return { best, value: bestVal, nodes, aborted, proved: !aborted, maxNodes, budgetMs };
 }
 
 // Objective from the raw signals. Deterministic, monotone in tokens then score.
@@ -482,13 +738,61 @@ function improve2opt(sel, pool, cands, g, opts) {
     seen.add(id); universe.push(x);
   }
   const poolIds = pool.map(idOf);
+  const slots = +g.slots || 15;
+  // P3.2: the 2-opt inner loops are the hot path (~56k `evalSet` calls on a
+  // 150-candidate set, ~all memo MISSES). In the dominant large-candidate case
+  // the lineup is the IDENTITY, so `evalSet`'s score is just `score(pool ∪ list)`.
+  //
+  // The identity condition has TWO parts, both checked EXACTLY:
+  //   (1) `pool.length + list.length <= slots`: `lineup()` keeps every item
+  //       (its own short-circuit is `pool.length <= n`).
+  //   (2) `pool ∪ list` has NO duplicate itemId: `lineup()` de-dupes by itemId,
+  //       but a raw `score()` does not (score([x,x]) != score([x])). When the
+  //       two lists share a card, we must NOT use the raw-score path.
+  // When both hold, `score(pool ∪ list).total === evalSet(g, universe, ids).score`
+  // is proven (tests/test_lineup_incremental.py, TestImprove2optIdentity). The
+  // incremental `_mkEval` then makes each probe ONE `addTotal`, not a full score.
+  const poolSet = new Set(poolIds);
+  // `opts._naive` disables the identity fast path and always calls `evalSet`
+  // (the pre-P3 behaviour). Test-only: used to prove the fast path returns the
+  // SAME plan as the naive path on identical inputs.
+  const naive = !!opts._naive;
+  const identityOk = list => {
+    if (naive) return false;
+    if (pool.length + list.length > slots) return false;
+    const seenIds = new Set(poolSet);
+    for (const x of list) { const id = idOf(x); if (seenIds.has(id)) return false; seenIds.add(id); }
+    return true;
+  };
   const valOf = list => {
-    const ids = new Set(poolIds);
-    for (const x of list) ids.add(idOf(x));
-    const ev = evalSet(g, universe, ids);
-    const dTokens = tokens(g, ev.grade) - baseTokens;
-    const dScore = ev.score - baseScore;
+    let evScore, evGrade;
+    if (identityOk(list)) {
+      const items = pool.concat(list);
+      evScore = score(items).total;
+      evGrade = grade(g, items.length, evScore);
+    } else {
+      const ids = new Set(poolIds);
+      for (const x of list) ids.add(idOf(x));
+      const ev = evalSet(g, universe, ids);
+      evScore = ev.score; evGrade = ev.grade;
+    }
+    const dTokens = tokens(g, evGrade) - baseTokens;
+    const dScore = evScore - baseScore;
     const dLoss = list.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0);
+    return objectiveValue(opts.objective, dTokens, dScore, dLoss);
+  };
+  // `valFrom` is the incremental form of `valOf(base.concat([cand]))` under the
+  // SAME identity condition: `baseCtx` is a `_mkEval` over `pool ∪ base`, so the
+  // score of `pool ∪ base ∪ {cand}` is ONE `addTotal(cand)`. `baseLoss` is the
+  // loss sum of `base` (constant within the (i,j) loop) so the value is on the
+  // same scale as `valOf`. The caller only uses it when the (i,j) `base` is
+  // identity-clean for the pool AND the candidate adds no duplicate.
+  const valFrom = (baseCtx, baseScoreV, itemCount, baseLoss, cand) => {
+    const scoreV = baseCtx.addTotal(cand);
+    const evGrade = grade(g, itemCount, scoreV);
+    const dTokens = tokens(g, evGrade) - baseTokens;
+    const dScore = scoreV - baseScore;
+    const dLoss = baseLoss + loss(cand, opts.taxRate, opts.priceScenario);
     return objectiveValue(opts.objective, dTokens, dScore, dLoss);
   };
   // Coin budget: an edit that pushes spend above `opts.coins` is NOT a valid
@@ -496,25 +800,56 @@ function improve2opt(sel, pool, cands, g, opts) {
   // silently make the plan infeasible).
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const spendOf = list => list.reduce((s, p) => s + priceOf(p.buyPrice, opts.priceScenario), 0);
+  // P3.3: the refinement is a SEARCH, and on a pathological set (large owned
+  // pool + hundreds of candidates) its exact form is unbounded -- one probe is a
+  // full `lineup(pool ∪ base ∪ {c})` (~35 ms at pool=75, cands=300), and the loop
+  // is O(|cur|^2 * cands) per pass. A wall-clock budget bounds the SEARCH (never
+  // the candidate pool): when it trips we stop and return the best plan found,
+  // and the caller reports `node_limit` instead of claiming optimality. Sets
+  // that finish inside the budget are unaffected and stay fully refined.
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 800;
+  const t0 = Date.now();
+  let budgetHit = false;
+  let probeTick = 0;
   let cur = sel.slice(), curVal = valOf(cur);
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 4 && !budgetHit; pass++) {
     let best = null, bestVal = curVal;
-    for (let i = 0; i < cur.length; i++) {
-      for (let j = i; j < cur.length; j++) {
+    for (let i = 0; i < cur.length && !budgetHit; i++) {
+      for (let j = i; j < cur.length && !budgetHit; j++) {
+        if (Date.now() - t0 > budgetMs) { budgetHit = true; break; }
         const base = cur.slice(); base.splice(j, 1); if (i !== j) base.splice(i, 1);
         const used = new Set(base.map(idOf));
+        // One incremental evaluator per (i,j) when `pool ∪ base` is identity-clean
+        // (no dup, fits in slots). For any candidate that would duplicate an id,
+        // fall back to `valOf`.
+        const baseItems = pool.concat(base);
+        const baseClean = identityOk(base);
+        const baseCtx = baseClean ? _mkEval(baseItems) : null;
+        const baseScoreV = baseClean ? score(baseItems).total : 0;
+        const baseLossV = baseClean
+          ? base.reduce((s, p) => s + loss(p, opts.taxRate, opts.priceScenario), 0) : 0;
         for (const c of cands) {
-          if (used.has(idOf(c))) continue;
+          // A non-identity probe is a full `lineup` (~35 ms on a large pool), so
+          // the clock must be checked INSIDE the candidate scan, not only per
+          // (i,j) -- otherwise one wide scan overshoots the budget by seconds.
+          if ((probeTick++ & 3) === 0 && Date.now() - t0 > budgetMs) { budgetHit = true; break; }
+          const cid = idOf(c);
+          if (used.has(cid)) continue;
           const cand = base.concat([c]);
           if (spendOf(cand) > coins) continue; // never leave the budget
-          const v = valOf(cand);
+          const v = (baseClean && !poolSet.has(cid))
+            ? valFrom(baseCtx, baseScoreV, baseItems.length + 1, baseLossV, c)
+            : valOf(cand);
           if (v > bestVal) { bestVal = v; best = cand; }
         }
+        if (budgetHit) break;
       }
     }
+    if (budgetHit) break;
     if (!best) break;
     cur = best; curVal = bestVal;
   }
+  opts.budgetHit = budgetHit;
   return cur;
 }
 
@@ -540,9 +875,17 @@ function planSet(g, players, opts) {
   const buyOf = (x) => priceOf(x.buyPrice, scenario);
   const pool = poolFor(g, players, collectedIds);
   const n = +g.slots || 15;
-  const base = { items: pool.slice(0, n), ...score(pool), count: pool.length };
-  const baseScore = base.total;
-  const baseTokens = tokens(g, grade(g, pool.length, baseScore));
+  // The "base" is the gallery's CURRENT lineup -- the owned pool capped at
+  // `slots` -- evaluated exactly like every candidate set (via `evalSet`, i.e.
+  // `lineup`). Using `score(pool)` over ALL owned items was inconsistent once
+  // `pool.length > slots`: the base then counted cards the lineup cannot hold,
+  // so `dScore` could go negative and a "buy nothing" plan looked worse than
+  // buying. For `pool.length <= slots` both forms are identical.
+  const poolIdSet = new Set(pool.map(x => x.itemId || x.id));
+  const baseEv = evalSet(g, pool, poolIdSet);
+  const base = { items: pool.slice(0, n), score: baseEv.score, base: baseEv.base, bonus: baseEv.bonus, count: pool.length };
+  const baseScore = baseEv.score;
+  const baseTokens = tokens(g, baseEv.grade);
   const cands = candidatesFor(g, players, collectedIds);
   // units = unpriced eligible items, used to fill slots before buying anything.
   const units = players.filter(p => !((collectedIds && collectedIds.has(p.itemId || p.id)) || p.collected)
@@ -554,20 +897,37 @@ function planSet(g, players, opts) {
   // Greedy marginal seed over candidates, respecting the coin budget so the seed
   // is itself a valid incumbent. The seed only bounds the B&B search below; it
   // does NOT replace it (B&B explores every feasible subset up to maxBundle).
+  //
+  // P3.2 (hot path): the naive form calls `gain1` for every (k, candidate) pair,
+  // and each `gain1` re-scores the whole item list TWICE -- O(maxBundle*cands)
+  // full scores, which dominated a large-pool plan. The current set is fixed
+  // while scanning candidates, so its score is computed ONCE per round and the
+  // marginal gain is just `score(items ∪ {c}) - curScore`. The resulting `sel`
+  // is IDENTICAL to the naive loop (same comparisons, same tie-break order).
   const seedItems = pool.concat(unitsNeeded);
+  _markPhase('seed');
   const candsSorted = cands.slice().sort((a, b) => (b.score - a.score) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id)));
-  let sel = [], seedSpend = 0;
+  let sel = [], seedSpend = 0, seedPicked = new Set();
   for (let k = 0; k < maxBundle; k++) {
+    const curItems = seedItems.concat(sel);
+    // The current set is fixed for the whole round; build ONE incremental
+    // evaluator and read each candidate's marginal gain from it. This replaces
+    // `score(curItems.concat([c])).total` per candidate with an O(bucket)
+    // addTotal(), and the value is IDENTICAL (same arithmetic, same tie-break
+    // order), so the chosen `sel` does not change.
+    const curScore = score(curItems).total; // computed once per round, not per candidate
+    const seedCtx = curScore === Infinity ? null : _mkEval(curItems);
     // pick the candidate with the greatest marginal gain that still fits the budget
     let best = null, bestGain = -1;
     for (const c of candsSorted) {
-      if (sel.some(s => (s.itemId || s.id) === (c.itemId || c.id))) continue;
+      const cid = c.itemId || c.id;
+      if (seedPicked.has(cid)) continue;
       if (seedSpend + buyOf(c) > coins) continue;
-      const gv = gain1(g, seedItems.concat(sel), c);
+      const gv = seedCtx === null ? -Infinity : seedCtx.addTotal(c) - curScore;
       if (gv > bestGain || best === null) { bestGain = gv; best = c; }
     }
     if (!best) break;
-    sel.push(best); seedSpend += buyOf(best);
+    sel.push(best); seedSpend += buyOf(best); seedPicked.add(best.itemId || best.id);
   }
   // --- R3: Branch & Bound over candidate sets S --------------------------------
   // Primary search path: `branchAndBound` explores the space of priced card
@@ -579,13 +939,17 @@ function planSet(g, players, opts) {
   // `lineup()` is heuristic and not monotone, see the note above).
   const bbOpts = {
     objective, taxRate, priceScenario: scenario, baseTokens, baseScore, maxBundle, coins,
-    seedSpend: 0, maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
+    seedSpend: 0, maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000,
+    budgetMs: opts.searchBudgetMs
   };
+  _markPhase('bb');
   const bb = branchAndBound(g, pool.concat(unitsNeeded), [], cands, sel, bbOpts);
+  _markPhase('post-bb');
   sel = bb.best;
-  // `optimality` records whether the plan is PROVEN optimal (B&B exhausted the
-  // search under its bound) or merely the best found because the node cap hit.
-  const optimality = bb.proved ? 'proved' : 'node_limit';
+  // `provedByBB` records whether the B&B exhausted its search under the bound.
+  // The final `optimality` is computed AFTER the refinement below, because a
+  // truncated 2-opt pass also means the plan is best-found, not proven.
+  const provedByBB = bb.proved;
   // B&B only ever returns coin-feasible sets (seed feasibility is validated and
   // every accepted node passes the budget check), so no truncation is needed.
   let filler = null;
@@ -599,7 +963,19 @@ function planSet(g, players, opts) {
     filler = picks;
   }
   // 2-opt refinement against the real objective (upgrades only; fillers are slot fillers).
-  sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, { objective, taxRate, priceScenario: scenario, baseTokens, baseScore, coins });
+  _markPhase('improve2opt');
+  let refineTruncated = false;
+  if (!opts._skipImprove) {
+    const rOpts = { objective, taxRate, priceScenario: scenario, baseTokens, baseScore, coins,
+                    _naive: opts._naive, budgetMs: opts.refineBudgetMs };
+    sel = improve2opt(sel, pool.concat(unitsNeeded), cands, g, rOpts);
+    refineTruncated = !!rOpts.budgetHit;
+  }
+  _markPhase('final');
+  // Honest optimality: 'proved' only when BOTH the B&B exhausted its bound AND
+  // the 2-opt refinement completed inside its budget. Otherwise the plan is the
+  // best found under the caps (`node_limit`), never claimed optimal.
+  const optimality = (provedByBB && !refineTruncated) ? 'proved' : 'node_limit';
   const chosen = sel.slice().sort((a, b) => (b.score - a.score) || String(a.itemId || a.id).localeCompare(String(b.itemId || b.id)));
   const fillers = filler || [];
   const recs = unitsNeeded.concat(fillers).concat(chosen);
@@ -661,11 +1037,28 @@ function portfolioWorld(galleries, players, opts) {
   const gs = galleries || [];
   const collectedIds = opts && opts.collectedIds;
   const pools = gs.map(g => poolFor(g, players, collectedIds));
-  const bases = gs.map((g, i) => {
-    const pool = pools[i];
-    const s = score(pool.slice(0, +g.slots || 15)).total;
-    return { score: s, tokens: tokens(g, grade(g, pool.length, s)) };
-  });
+  // The base is the set's CURRENT lineup (owned pool capped at `slots`),
+  // evaluated exactly like every candidate set -- via `evalSet`/`lineup`. Using
+  // `score(pool.slice(0,slots))` (the first N, not the best N) was inconsistent
+  // with `portfolioValue`, which evaluates the lineup: the empty selection then
+  // had a non-zero dScore. Same class of defect fixed in `planSet` (P3).
+  //
+  // LAZY: a set's base is only needed when that set is AFFECTED by a chosen
+  // card. Computing all 127 lineups up front cost ~2.3 s on the benchmark (and
+  // forced the whole plan past any 3 s budget), so the base is memoised and
+  // built on first use. `bases` stays an array (filled in place) so existing
+  // callers keep working; `baseFor(i)` is the lazy accessor.
+  const bases = new Array(gs.length).fill(null);
+  const baseFor = i => {
+    let b = bases[i];
+    if (!b) {
+      const pool = pools[i];
+      const ev = evalSet(gs[i], pool, new Set(pool.map(x => x.itemId || x.id)));
+      b = { score: ev.score, tokens: tokens(gs[i], ev.grade) };
+      bases[i] = b;
+    }
+    return b;
+  };
   const prices = new Map();
   for (const g of gs) {
     for (const c of candidatesFor(g, players, collectedIds)) {
@@ -676,7 +1069,14 @@ function portfolioWorld(galleries, players, opts) {
       prices.set(id, rec);
     }
   }
-  return { gs, pools, bases, prices, cands: [...prices.keys()].map(id => prices.get(id).card) };
+  // P3 (rework): hoist the per-set eval universes ONCE. `portfolioValue` is the
+  // portfolio's hot call (127 evalSets each) and used to build a fresh
+  // `pool.concat(allCands)` array every time -- which defeated `evalSet`'s pool
+  // index (`_poolItemsFor` rebuilds a 2,500-entry Map on any new array), making
+  // ONE `portfolioValue` cost ~3.4 s. Stable arrays make that index reusable.
+  const cands = [...prices.keys()].map(id => prices.get(id).card);
+  const universes = pools.map(pool => pool.concat(cands));
+  return { gs, pools, bases, baseFor, prices, cands, universes };
 }
 // Portfolio objective over a chosen card set S. Cost is charged ONCE over the
 // distinct cards (shared cards are never double-counted).
@@ -684,16 +1084,32 @@ function portfolioValue(galleries, pools, prices, S, opts) {
   const idOf = x => x.itemId || x.id;
   const chosenIds = new Set(S.map(idOf));
   let value = 0, dTokens = 0, dScore = 0;
-  const allCands = [...prices.values()].map(r => r.card);
+  // Reuse the hoisted universes when the caller passes them (`portfolioWorld`);
+  // otherwise fall back to building them here (keeps the standalone signature).
+  const universes = opts.universes || pools.map(pool => pool.concat([...prices.values()].map(r => r.card)));
+  // A set is only affected if at least one chosen card is ELIGIBLE for it. Every
+  // other set keeps its base lineup, so its dTokens/dScore are exactly 0 and it
+  // contributes 0 to the objective -- evaluating it is pure waste. On the full
+  // dataset that turns ~127 `lineup`s per call into only the affected ones, which
+  // is what makes a portfolio search affordable at all (P3 rework).
+  const affected = new Set();
+  for (const id of chosenIds) { const rec = prices.get(id); if (rec) for (const sid of rec.setIds) affected.add(sid); }
+  // A single evaluation can be seconds when a card is eligible for many sets, so
+  // the SEARCH cannot bound the budget by checking between candidates only. With
+  // `opts.deadline` the loop bails out mid-way and flags `opts.aborted`; callers
+  // must then discard the partial value and stop the search.
+  const deadline = opts.deadline || Infinity;
   for (let i = 0; i < galleries.length; i++) {
+    if ((i & 3) === 0 && Date.now() > deadline) { opts.aborted = true; return { value: -Infinity, cost: 0, dTokens: 0, dScore: 0, aborted: true }; }
     const g = galleries[i], pool = pools[i];
+    if (!affected.has(g.id)) continue; // unaffected -> exactly 0 contribution
     // Evaluate over (owned pool ∪ all candidates) so bought cards can enter the
     // lineup; the id set selects exactly the owned items plus the chosen cards.
-    const universe = pool.concat(allCands);
+    const universe = universes[i];
     const ids = new Set(pool.map(idOf));
     for (const id of chosenIds) if (prices.has(id) && prices.get(id).setIds.has(g.id)) ids.add(id);
     const ev = evalSet(g, universe, ids);
-    const b = opts.bases[i];
+    const b = opts.baseFor ? opts.baseFor(i) : opts.bases[i];
     const dt = tokens(g, ev.grade) - b.tokens;
     const ds = ev.score - b.score;
     dTokens += dt; dScore += ds;
@@ -713,7 +1129,7 @@ function portfolioBrute(galleries, players, opts) {
   const w = portfolioWorld(galleries, players, opts);
   const idOf = x => x.itemId || x.id;
   const budget = Math.max(0, (+opts.coins != null ? +opts.coins : Infinity) - (+opts.reserve || 0));
-  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: w.bases };
+  const vopts = { objective: opts.objective || 'eff', taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: w.bases, baseFor: w.baseFor, universes: w.universes };
   let best = [], bestVal = -Infinity, bestCost = 0;
   const cands = w.cands, n = Math.min(cands.length, Math.max(1, +opts.maxBundle || 15));
   if (cands.length > 30) throw new Error('portfolioBrute: candidate universe too large (' + cands.length + ')');
@@ -746,7 +1162,7 @@ function portfolioUpperBound(galleries, pools, prices, opts) {
     const ubScore = setUpperBound(g, universe);
     const ubGrade = grade(g, +g.slots || 15, ubScore); // best grade reachable
     const ubTokens = tokens(g, ubGrade);
-    const b = opts.bases[i];
+    const b = opts.baseFor ? opts.baseFor(i) : opts.bases[i];
     ubVal += objectiveValue(opts.objective, ubTokens - b.tokens, ubScore - b.score, 0);
   }
   return ubVal;
@@ -762,8 +1178,12 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
   const budget = opts.budget;
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
   const maxNodes = +opts.maxNodes > 0 ? +opts.maxNodes : 200000;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
-  const ubVal = portfolioUpperBound(galleries, pools, prices, vopts);
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen, universes: opts.universes, deadline: opts.deadline };
+  // The admissible bound is optional: computing it forces every set's base
+  // lineup (~2.3 s on the full dataset), which can eat a tight total budget. The
+  // caller may pass `ubVal` (already computed, or `Infinity` to disable pruning
+  // and rely on the node/time caps -- still correct, just less pruned).
+  const ubVal = opts.ubVal !== undefined ? opts.ubVal : portfolioUpperBound(galleries, pools, prices, vopts);
   // Deterministic order: expensive cards first (bounded early), then by score desc.
   const order = cands.slice().sort((a, b) =>
     (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (sanScore(b.score) - sanScore(a.score))
@@ -772,23 +1192,34 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
   let best = (seed || []).slice();
   const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   if (seedCost > budget) best = [];
-  let bestVal = portfolioValue(galleries, pools, prices, best, vopts).value;
+  // P3.3: bound the SEARCH (never the candidate pool) with a wall-clock budget,
+  // exactly like the single-set B&B. The global portfolio scans every candidate
+  // against every set per node, so without a budget a 3000-card world runs for
+  // minutes. When it trips, `aborted` is set and the plan is the BEST FOUND.
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 4000;
+  const tStart = Date.now();
+  const seedEval = portfolioValue(galleries, pools, prices, best, vopts);
+  if (vopts.aborted) return { best, value: -Infinity, cost: seedCost, nodes: 0, aborted: true, proved: false, maxNodes, budgetMs };
+  let bestVal = seedEval.value;
   let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   let nodes = 0, aborted = false;
   const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
   const rec = (idx, S) => {
     if (aborted) return;
     if (++nodes > maxNodes) { aborted = true; return; }
+    if (Date.now() - tStart > budgetMs) { aborted = true; return; }
     // Admissible value bound: if even the best possible cannot beat the incumbent,
     // prune. (Cost is a hard constraint, handled below, not in the value bound.)
     if (ubVal <= bestVal) return;
     if (S.length >= maxBundle || idx >= order.length) return;
-    for (let i = idx; i < order.length; i++) {
+    for (let i = idx; i < order.length && !aborted; i++) {
+      if ((i & 31) === 0 && Date.now() - tStart > budgetMs) { aborted = true; return; }
       const c = order[i];
       if (S.some(x => idOf(x) === idOf(c))) continue;
       if (partialCost(S) + loss(c, opts.taxRate, opts.priceScenario) > budget) continue; // hard budget
       const S2 = S.concat([c]);
       const r = portfolioValue(galleries, pools, prices, S2, vopts);
+      if (vopts.aborted) { aborted = true; return; } // shared deadline hit mid-eval
       if (r.value > bestVal || (r.value === bestVal && r.cost < bestCost)) {
         bestVal = r.value; best = S2.slice(); bestCost = r.cost;
       }
@@ -796,7 +1227,7 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
     }
   };
   rec(0, []);
-  return { best, value: bestVal, cost: bestCost, nodes, aborted, proved: !aborted, maxNodes };
+  return { best, value: bestVal, cost: bestCost, nodes, aborted, proved: !aborted, maxNodes, budgetMs };
 }
 
 // 2-opt refinement for the portfolio: drop up to two cards, refill from the free
@@ -804,50 +1235,77 @@ function portfolioBranchAndBound(galleries, pools, prices, cands, seed, opts) {
 function portfolioImprove2opt(galleries, pools, prices, cands, sel, opts) {
   const idOf = x => x.itemId || x.id;
   const budget = opts.budget;
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases };
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen, universes: opts.universes, deadline: opts.deadline };
   const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
-  const valOf = list => portfolioValue(galleries, pools, prices, list, vopts).value;
+  const valOf = list => {
+    const r = portfolioValue(galleries, pools, prices, list, vopts);
+    if (vopts.aborted) hit = true; // shared deadline hit mid-eval
+    return r.value;
+  };
+  // P3.3: bound the refinement SEARCH (never the candidate pool), as for the
+  // single-set 2-opt. On a 3000-card world each `valOf` scans every set, so the
+  // un-bounded loop runs for minutes; on trip we keep the best found so far.
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 2000;
+  const t0 = Date.now();
+  let hit = false;
   let cur = sel.slice(), curVal = valOf(cur);
-  for (let pass = 0; pass < 4; pass++) {
+  if (hit) { opts.hit = true; return cur; }
+  for (let pass = 0; pass < 4 && !hit; pass++) {
     let best = null, bestVal = curVal;
-    for (let i = 0; i < cur.length; i++) {
-      for (let j = i; j < cur.length; j++) {
+    for (let i = 0; i < cur.length && !hit; i++) {
+      for (let j = i; j < cur.length && !hit; j++) {
+        if (Date.now() - t0 > budgetMs) { hit = true; break; }
         const base = cur.slice(); base.splice(j, 1); if (i !== j) base.splice(i, 1);
         const used = new Set(base.map(idOf));
         for (const c of cands) {
+          if (Date.now() - t0 > budgetMs) { hit = true; break; }
           if (used.has(idOf(c))) continue;
           const cand = base.concat([c]);
           if (spendOf(cand) > budget) continue;
           const v = valOf(cand);
+          if (hit) break;
           if (v > bestVal) { bestVal = v; best = cand; }
         }
       }
     }
-    if (!best) break;
+    if (hit || !best) break;
     cur = best; curVal = bestVal;
   }
+  opts.hit = hit;
   return cur;
 }
 
 // Deterministic greedy marginal seed over the shared candidate universe (cost
 // charged once). Used ONLY as a B&B seed, so it is also itself a feasible plan.
 function portfolioGreedySeed(galleries, pools, prices, cands, opts) {
-  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget: opts.budget, bases: opts.bases };
-  let selected = [], selVal = portfolioValue(galleries, pools, prices, selected, vopts).value;
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario, budget: opts.budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen, universes: opts.universes, deadline: opts.deadline };
+  const r0 = portfolioValue(galleries, pools, prices, [], vopts);
+  if (vopts.aborted) { opts.hit = true; return []; }
+  let selected = [], selVal = r0.value;
   const usedIds = new Set();
-  for (let k = 0; k < Math.max(1, +opts.maxBundle || 15); k++) {
+  // P3.3: this seed is a SEARCH over the shared universe, and on a 3000-card
+  // world each `portfolioValue` scans every set (~127 evals), so the un-bounded
+  // `maxBundle * cands` scan runs for hours. Bound it by wall clock; on trip we
+  // return the (feasible) partial seed. `opts.hit` reports the truncation.
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 3000;
+  const t0 = Date.now();
+  let hit = false;
+  for (let k = 0; k < Math.max(1, +opts.maxBundle || 15) && !hit; k++) {
     let bestC = null, bestV = selVal;
     for (const c of cands) {
+      if (Date.now() - t0 > budgetMs) { hit = true; break; }
       const id = c.itemId || c.id;
       if (usedIds.has(id)) continue;
       const trial = selected.concat([c]);
       const r = portfolioValue(galleries, pools, prices, trial, vopts);
+      if (vopts.aborted) { hit = true; break; } // shared deadline hit mid-eval
       if (r.cost > opts.budget) continue;
       if (r.value > bestV) { bestV = r.value; bestC = c; }
     }
     if (!bestC) break;
     selected.push(bestC); usedIds.add(bestC.itemId || bestC.id); selVal = bestV;
   }
+  opts.hit = hit;
   return selected;
 }
 
@@ -861,30 +1319,314 @@ function portfolioGreedySeed(galleries, pools, prices, cands, opts) {
 //   'node_limit' -> the `maxNodes` cap tripped; the plan is the BEST FOUND.
 // A very small universe (<= EXACT_PF_LIMIT) is enumerated exhaustively and is
 // proven by construction.
+// ===== Resumable (cooperative) portfolio search ==============================
+// A very small universe (<= EXACT_PF_LIMIT) is enumerated exhaustively and is
+// proven by construction; anything larger uses the global Branch & Bound below.
 const EXACT_PF_LIMIT = 20;
-function portfolioPlan(galleries, players, opts) {
+// Yielded by a fine-grained unit when the shared deadline is reached and the
+// caller allows pausing: the pump stops until `extend(ms)` resumes the search.
+const _PF_PAUSE = { paused: true };
+// The search is expressed as GENERATORS so the UI can advance it in small time
+// slices and return to the browser between them -- no long synchronous block.
+// Generators preserve ALL local state (the B&B stack, the incumbent, the seed's
+// partial selection) across `next()` calls, and the evaluation memo is module
+// level, so it is preserved too. `portfolioPlan` drains the same generator in one
+// go, so the synchronous API and the UI share ONE implementation and cannot
+// drift. Each `yield` marks a unit of work: one set evaluation, one candidate, or
+// one search node.
+
+// Resumable `portfolioWorld`: yields once per set while building pools and the
+// candidate price index, so even the one-time setup is not a single long block.
+function* _pfWorldGen(galleries, players, opts) {
+  const gs = galleries || [];
+  const collectedIds = opts && opts.collectedIds;
+  const pools = [];
+  for (const g of gs) { yield null; pools.push(poolFor(g, players, collectedIds)); }
+  const bases = new Array(gs.length).fill(null);
+  const baseFor = i => {
+    let b = bases[i];
+    if (!b) {
+      const pool = pools[i];
+      const ev = evalSet(gs[i], pool, new Set(pool.map(x => x.itemId || x.id)));
+      b = { score: ev.score, tokens: tokens(gs[i], ev.grade) };
+      bases[i] = b;
+    }
+    return b;
+  };
+  const prices = new Map();
+  for (const g of gs) {
+    yield null;
+    for (const c of candidatesFor(g, players, collectedIds)) {
+      const id = c.itemId || c.id;
+      const rec = prices.get(id) || { card: c, setIds: new Set() };
+      if (!rec.setIds.has(g.id)) rec.setIds.add(g.id);
+      if ((+c.score || 0) > (+rec.card.score || 0)) rec.card = c;
+      prices.set(id, rec);
+    }
+  }
+  const cands = [...prices.keys()].map(id => prices.get(id).card);
+  const universes = pools.map(pool => pool.concat(cands));
+  const w = { gs, pools, bases, baseFor, prices, cands, universes };
+  // Interruptible accessor for the cooperative path.
+  w.baseGen = i => _pfBaseGen(w, i);
+  return w;
+}
+
+// Resumable lazy base: the FIRST use of a set's base runs a full `lineup`, which
+// used to be an unbreakable block inside `_pfValueGen` (it called the SYNCHRONOUS
+// `baseFor`). This version delegates to the interruptible `_evalSetGen`.
+function* _pfBaseGen(w, i) {
+  let b = w.bases[i];
+  if (!b) {
+    const pool = w.pools[i];
+    const ev = yield* _evalSetGen(w.gs[i], pool, new Set(pool.map(x => x.itemId || x.id)));
+    b = { score: ev.score, tokens: tokens(w.gs[i], ev.grade) };
+    w.bases[i] = b;
+  }
+  return b;
+}
+
+// Resumable `portfolioValue`: yields once per AFFECTED set.
+function* _pfValueGen(galleries, pools, prices, S, opts, ctl) {
+  const idOf = x => x.itemId || x.id;
+  const chosenIds = new Set(S.map(idOf));
+  let value = 0, dTokens = 0, dScore = 0;
+  const universes = opts.universes || pools.map(pool => pool.concat([...prices.values()].map(r => r.card)));
+  const affected = new Set();
+  for (const id of chosenIds) { const rec = prices.get(id); if (rec) for (const sid of rec.setIds) affected.add(sid); }
+  const dl = () => (ctl ? ctl.deadline : (opts.deadline || Infinity));
+  for (let i = 0; i < galleries.length; i++) {
+    const g = galleries[i], pool = pools[i];
+    if (!affected.has(g.id)) continue; // unaffected -> exactly 0 contribution
+    yield null; // unit boundary: this set's evaluation
+    if ((i & 3) === 0 && Date.now() > dl()) {
+      if (ctl && ctl.abortOnDeadline === false) { while (Date.now() > dl()) yield _PF_PAUSE; }
+      else { opts.aborted = true; return { value: -Infinity, cost: 0, dTokens: 0, dScore: 0, aborted: true }; }
+    }
+    const universe = universes[i];
+    const ids = new Set(pool.map(idOf));
+    for (const id of chosenIds) if (prices.has(id) && prices.get(id).setIds.has(g.id)) ids.add(id);
+    const ev = yield* _evalSetGen(g, universe, ids);
+    const b = opts.baseGen ? (yield* opts.baseGen(i)) : (opts.baseFor ? opts.baseFor(i) : opts.bases[i]);
+    const dt = tokens(g, ev.grade) - b.tokens;
+    const ds = ev.score - b.score;
+    dTokens += dt; dScore += ds;
+    value += objectiveValue(opts.objective, dt, ds, 0);
+  }
+  const totalCost = S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
+  return { value, cost: totalCost, dTokens, dScore };
+}
+
+// Resumable `portfolioUpperBound`: yields once per set.
+function* _pfBoundGen(galleries, pools, prices, opts, ctl) {
+  const allCands = [...prices.values()].map(r => r.card);
+  let ubVal = 0;
+  for (let i = 0; i < galleries.length; i++) {
+    yield null;
+    const g = galleries[i];
+    const universe = opts.universes ? opts.universes[i] : pools[i].concat(allCands);
+    const ubScore = setUpperBound(g, universe);
+    const ubGrade = grade(g, +g.slots || 15, ubScore);
+    const ubTokens = tokens(g, ubGrade);
+    const b = opts.baseGen ? (yield* opts.baseGen(i)) : (opts.baseFor ? opts.baseFor(i) : opts.bases[i]);
+    ubVal += objectiveValue(opts.objective, ubTokens - b.tokens, ubScore - b.score, 0);
+  }
+  return ubVal;
+}
+
+// Resumable greedy seed: yields per candidate evaluation (and per set inside it).
+function* _pfSeedGen(galleries, pools, prices, cands, opts, prog, ctl) {
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario,
+                  budget: opts.budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen,
+                  universes: opts.universes, deadline: opts.deadline };
+  const r0 = yield* _pfValueGen(galleries, pools, prices, [], vopts, ctl);
+  if (vopts.aborted) { opts.hit = true; return []; }
+  let selected = [], selVal = r0.value;
+  // "Buy nothing" is already a valid, feasible plan -- surface it at once so the
+  // UI has a real (best-found) intermediate from the very first tick.
+  if (prog) { prog.best = []; prog.value = selVal; prog.cost = 0; prog.phase = 'seed'; yield prog; }
+  const usedIds = new Set();
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 3000;
+  const t0 = Date.now();
+  let hit = false;
+  for (let k = 0; k < Math.max(1, +opts.maxBundle || 15) && !hit; k++) {
+    let bestC = null, bestV = selVal;
+    for (const c of cands) {
+      if (Date.now() - t0 > budgetMs) { hit = true; break; }
+      const id = c.itemId || c.id;
+      if (usedIds.has(id)) continue;
+      const trial = selected.concat([c]);
+      const r = yield* _pfValueGen(galleries, pools, prices, trial, vopts, ctl);
+      if (vopts.aborted) { hit = true; break; }
+      if (r.cost > opts.budget) continue;
+      if (r.value > bestV) {
+        bestV = r.value; bestC = c;
+        // Publish the improving candidate immediately (a useful 1-card plan long
+        // before the round finishes) so "time to first plan" stays small.
+        if (prog) { prog.best = trial.slice(); prog.value = bestV; prog.cost = r.cost; prog.phase = 'seed'; yield prog; }
+      }
+    }
+    if (!bestC) break;
+    selected.push(bestC); usedIds.add(bestC.itemId || bestC.id); selVal = bestV;
+    if (prog) { prog.best = selected.slice(); prog.value = selVal; prog.phase = 'seed'; yield prog; }
+  }
+  opts.hit = hit;
+  return selected;
+}
+
+// Resumable global B&B with an EXPLICIT stack (so it can be paused mid-search).
+// The traversal mirrors the recursive version exactly: depth-first, children in
+// candidate order, same entry checks and same prune rule.
+function* _pfBbGen(galleries, pools, prices, cands, seed, opts, prog, ctl) {
+  const idOf = x => x.itemId || x.id;
+  const budget = opts.budget;
+  const maxBundle = Math.max(1, +opts.maxBundle || 15);
+  const maxNodes = +opts.maxNodes > 0 ? +opts.maxNodes : 200000;
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario,
+                  budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen, universes: opts.universes, deadline: opts.deadline };
+  const ubVal = opts.ubVal !== undefined ? opts.ubVal : (yield* _pfBoundGen(galleries, pools, prices, vopts, ctl));
+  const order = cands.slice().sort((a, b) =>
+    (loss(b, opts.taxRate, opts.priceScenario) - loss(a, opts.taxRate, opts.priceScenario)) || (sanScore(b.score) - sanScore(a.score))
+    || String(idOf(a)).localeCompare(String(idOf(b))));
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 4000;
+  const tStart = Date.now();
+  let best = (seed || []).slice();
+  const seedCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
+  if (seedCost > budget) best = [];
+  const seedEval = yield* _pfValueGen(galleries, pools, prices, best, vopts, ctl);
+  if (vopts.aborted) return { best, value: -Infinity, cost: seedCost, nodes: 0, aborted: true, proved: false, maxNodes, budgetMs };
+  let bestVal = seedEval.value;
+  let bestCost = best.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
+  if (prog) { prog.best = best.slice(); prog.value = bestVal; prog.phase = 'search'; yield prog; }
+  let nodes = 0, aborted = false;
+  const partialCost = S => S.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
+  // Explicit DFS stack. `entered` runs the node-entry checks once.
+  const stack = [{ idx: 0, S: [], i: 0, entered: false }];
+  while (stack.length) {
+    if (aborted) break;
+    // PAUSE (do not abort) when the shared deadline is reached: the stack, the
+    // incumbent and the memo all stay intact, so extending the deadline resumes
+    // the SAME search where it stopped. `budgetMs` (a phase cap) still aborts.
+    if (ctl && Date.now() > ctl.deadline) {
+      if (ctl.abortOnDeadline) { aborted = true; break; }
+      if (prog) { prog.paused = true; prog.phase = 'search'; yield prog; } continue;
+    }
+    const top = stack[stack.length - 1];
+    if (!top.entered) {
+      top.entered = true;
+      if (++nodes > maxNodes) { aborted = true; break; }
+      if (Date.now() - tStart > budgetMs) { aborted = true; break; }
+      yield null; // unit boundary: one node
+      if (ubVal <= bestVal) { stack.pop(); continue; }                       // prune
+      if (top.S.length >= maxBundle || top.idx >= order.length) { stack.pop(); continue; }
+    }
+    if (top.i >= order.length) { stack.pop(); continue; }
+    const i = top.i++;
+    if ((i & 31) === 0 && Date.now() - tStart > budgetMs) { aborted = true; break; }
+    const c = order[i];
+    if (top.S.some(x => idOf(x) === idOf(c))) continue;
+    if (partialCost(top.S) + loss(c, opts.taxRate, opts.priceScenario) > budget) continue;
+    const S2 = top.S.concat([c]);
+    const r = yield* _pfValueGen(galleries, pools, prices, S2, vopts, ctl);
+    if (vopts.aborted) { aborted = true; break; }
+    if (r.value > bestVal || (r.value === bestVal && r.cost < bestCost)) {
+      bestVal = r.value; best = S2.slice(); bestCost = r.cost;
+      if (prog) { prog.best = best.slice(); prog.value = bestVal; prog.nodes = nodes; prog.phase = 'search'; yield prog; }
+    }
+    stack.push({ idx: i + 1, S: S2, i: i + 1, entered: false });
+  }
+  return { best, value: bestVal, cost: bestCost, nodes, aborted, proved: !aborted, maxNodes, budgetMs };
+}
+
+// Resumable 2-opt refinement.
+function* _pfRefineGen(galleries, pools, prices, cands, sel, opts, prog, ctl) {
+  const idOf = x => x.itemId || x.id;
+  const budget = opts.budget;
+  const vopts = { objective: opts.objective, taxRate: opts.taxRate, priceScenario: opts.priceScenario,
+                  budget, bases: opts.bases, baseFor: opts.baseFor, baseGen: opts.baseGen, universes: opts.universes, deadline: opts.deadline };
+  const spendOf = list => list.reduce((s, c) => s + loss(c, opts.taxRate, opts.priceScenario), 0);
+  const budgetMs = +opts.budgetMs > 0 ? +opts.budgetMs : 2000;
+  const t0 = Date.now();
+  let hit = false;
+  let cur = sel.slice();
+  let curVal = (yield* _pfValueGen(galleries, pools, prices, cur, vopts, ctl)).value;
+  if (vopts.aborted) { opts.hit = true; return cur; }
+  for (let pass = 0; pass < 4 && !hit; pass++) {
+    let best = null, bestVal = curVal;
+    for (let i = 0; i < cur.length && !hit; i++) {
+      for (let j = i; j < cur.length && !hit; j++) {
+        if (Date.now() - t0 > budgetMs) { hit = true; break; }
+        if (ctl && Date.now() > ctl.deadline) {
+          if (ctl.abortOnDeadline) { hit = true; break; }
+          if (prog) { prog.paused = true; prog.phase = 'refine'; yield prog; } continue;
+        }
+        const base = cur.slice(); base.splice(j, 1); if (i !== j) base.splice(i, 1);
+        const used = new Set(base.map(idOf));
+        for (const c of cands) {
+          if (Date.now() - t0 > budgetMs) { hit = true; break; }
+          if (ctl && Date.now() > ctl.deadline) {
+            if (ctl.abortOnDeadline) { hit = true; break; }
+            if (prog) { prog.paused = true; prog.phase = 'refine'; yield prog; } continue;
+          }
+          if (used.has(idOf(c))) continue;
+          const cand = base.concat([c]);
+          if (spendOf(cand) > budget) continue;
+          const r = yield* _pfValueGen(galleries, pools, prices, cand, vopts, ctl);
+          if (vopts.aborted) { hit = true; break; }
+          if (r.value > bestVal) { bestVal = r.value; best = cand; }
+        }
+      }
+    }
+    if (hit || !best) break;
+    cur = best; curVal = bestVal;
+  }
+  opts.hit = hit;
+  return cur;
+}
+
+// The orchestrator. Yields the live `prog` object (best plan so far) so a caller
+// can render an intermediate at any time. RETURNS the final plan object.
+function* _portfolioPlanGen(galleries, players, opts, ctl) {
   opts = opts || {};
   const objective = opts.objective || 'eff';
   const taxRate = opts.taxRate;
-  // Active price scenario, propagated to every per-set / portfolio sub-call.
   const priceScenario = opts.priceScenario || 'base';
   const coins = +opts.coins != null ? +opts.coins : Infinity;
   const reserve = +opts.reserve || 0;
   const budget = Math.max(0, coins - reserve);
   const maxBundle = Math.max(1, +opts.maxBundle || 15);
+  const totalBudgetMs = +opts.totalBudgetMs > 0 ? +opts.totalBudgetMs : 0;
+  const reportReserveMs = totalBudgetMs > 0 ? Math.max(150, totalBudgetMs * 0.1) : 0;
+  // `ctl.deadline` is the SEARCH deadline and is MUTABLE: `portfolioSearch`
+  // exposes `extend(ms)`, which pushes it so an UNFINISHED search can be
+  // continued in place (the B&B stack, the incumbent and the memo survive).
+  if (!ctl) ctl = { deadline: totalBudgetMs > 0 ? Date.now() + totalBudgetMs - reportReserveMs : Infinity, abortOnDeadline: true };
+  const hardDeadline = () => ctl.deadline + reportReserveMs;
+  const left = () => hardDeadline() - Date.now();
+  const searchDeadline = () => ctl.deadline;
+  const phaseCap = (fraction, fallback, floor) => totalBudgetMs > 0
+    ? Math.max(floor, Math.min(totalBudgetMs * fraction, left()))
+    : fallback;
+  const wantDetail = opts.detail !== false;
 
-  const w = portfolioWorld(galleries, players, opts);
+  const prog = { best: [], value: -Infinity, cost: 0, nodes: 0, phase: 'world', proved: false, exact: false, aborted: false };
+  yield prog;
+
+  const w = yield* _pfWorldGen(galleries, players, opts);
   const gs = w.gs, pools = w.pools, prices = w.prices, cands = w.cands;
-  const vopts = { objective, taxRate, priceScenario, budget, bases: w.bases };
+  // Reporting evaluations use the HARD deadline (a getter, so it follows an
+  // extension); the search phases use `ctl` and stop at the search deadline.
+  const vopts = { objective, taxRate, priceScenario, budget, bases: w.bases, baseFor: w.baseFor, baseGen: w.baseGen, universes: w.universes,
+                  get deadline() { return hardDeadline(); } };
 
-  // Per-set detail rows for a chosen id list (shared by every regime).
   const detailFor = chosenIds => gs.map((g, i) => {
-    const universe = pools[i].concat(cands);
+    const universe = w.universes[i];
     const ids = new Set(pools[i].map(x => x.itemId || x.id));
     for (const id of chosenIds) if (prices.has(id) && prices.get(id).setIds.has(g.id)) ids.add(id);
     const ev = evalSet(g, universe, ids);
-    return { set: g.id, dScore: ev.score - w.bases[i].score,
-      dTokens: tokens(g, ev.grade) - w.bases[i].tokens, newGrade: ev.grade };
+    const b = w.baseFor(i);
+    return { set: g.id, dScore: ev.score - b.score,
+      dTokens: tokens(g, ev.grade) - b.tokens, newGrade: ev.grade };
   });
 
   // ---- Tiny-universe regime: exhaustive enumeration (proven by construction).
@@ -895,41 +1637,130 @@ function portfolioPlan(galleries, players, opts) {
       for (let i = 0; i < cands.length; i++) if (mask & (1 << i)) S.push(cands[i]);
       if (S.length > maxBundle) continue;
       nodes++;
-      const r = portfolioValue(gs, pools, prices, S, vopts);
+      yield prog;
+      const r = yield* _pfValueGen(gs, pools, prices, S, vopts);
       if (r.cost > budget) continue;
       if (r.value > bestVal || (r.value === bestVal && r.cost < bestCost)) {
         bestVal = r.value; bestS = S; bestCost = r.cost;
+        prog.best = bestS.slice(); prog.value = bestVal; prog.phase = 'exhaustive';
       }
     }
     const chosenIds = bestS.map(x => x.itemId || x.id).sort();
-    const rr = portfolioValue(gs, pools, prices, bestS, vopts);
+    const rr = yield* _pfValueGen(gs, pools, prices, bestS, vopts);
+    prog.phase = 'done'; prog.proved = true; prog.exact = true; prog.nodes = nodes;
     return {
       objective, coins, reserve, budget, universe: cands.length,
       chosen: chosenIds, cost: bestCost, value: rr.value, dTokens: rr.dTokens, dScore: rr.dScore,
-      feasible: bestCost <= budget, detail: detailFor(chosenIds),
+      feasible: bestCost <= budget, detail: wantDetail ? detailFor(chosenIds) : null,
       optimality: 'proved', proven: true, exact: true, nodes
     };
   }
 
   // ---- Global B&B over the shared set S (the R3 portfolio path, larger pools).
-  const seed = portfolioGreedySeed(gs, pools, prices, cands, { objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases });
-  const bb = portfolioBranchAndBound(gs, pools, prices, cands, seed, {
-    objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases,
-    maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000
-  });
-  // 2-opt refinement (budget-respecting): keep it only if it raises value.
-  const refined = portfolioImprove2opt(gs, pools, prices, cands, bb.best, { objective, taxRate, priceScenario, budget, bases: w.bases });
-  const refinedVal = portfolioValue(gs, pools, prices, refined, vopts).value;
+  const seedOpts = { objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases, baseFor: w.baseFor, baseGen: w.baseGen, universes: w.universes, deadline: searchDeadline(),
+                     budgetMs: phaseCap(0.25, +opts.portfolioSeedBudgetMs > 0 ? +opts.portfolioSeedBudgetMs : 3000, 120) };
+  prog.phase = 'seed'; yield prog;
+  const seed = yield* _pfSeedGen(gs, pools, prices, cands, seedOpts, prog, ctl);
+  // The bound gives pruning but costs ~2.8 s; skip it when the shared budget is
+  // short, otherwise it would swallow the budget whole.
+  prog.phase = 'bound'; yield prog;
+  const ubVal = (totalBudgetMs > 0 && left() < 3500)
+    ? Infinity
+    : (yield* _pfBoundGen(gs, pools, prices, vopts, ctl));
+  const bb = yield* _pfBbGen(gs, pools, prices, cands, seed, {
+    objective, taxRate, priceScenario, budget, maxBundle, bases: w.bases, baseFor: w.baseFor, baseGen: w.baseGen, universes: w.universes, deadline: searchDeadline(),
+    ubVal,
+    maxNodes: +opts.maxNodes > 0 ? +opts.maxNodes : 200000,
+    budgetMs: totalBudgetMs > 0 ? Infinity : phaseCap(0.55, +opts.portfolioSearchBudgetMs > 0 ? +opts.portfolioSearchBudgetMs : 4000, 120)
+  }, prog, ctl);
+  const rOpts = { objective, taxRate, priceScenario, budget, bases: w.bases, baseFor: w.baseFor, baseGen: w.baseGen, universes: w.universes, deadline: searchDeadline(),
+                  budgetMs: totalBudgetMs > 0 ? Infinity : phaseCap(0.15, +opts.portfolioRefineBudgetMs > 0 ? +opts.portfolioRefineBudgetMs : 2000, 80) };
+  prog.phase = 'refine'; yield prog;
+  const refined = yield* _pfRefineGen(gs, pools, prices, cands, bb.best, rOpts, prog, ctl);
+  const refinedVal = (yield* _pfValueGen(gs, pools, prices, refined, vopts)).value;
   const chosenSel = refinedVal >= bb.value ? refined : bb.best;
   const chosenIds = chosenSel.map(x => x.itemId || x.id).sort();
-  const rr = portfolioValue(gs, pools, prices, chosenSel, vopts);
-  const optimality = bb.proved ? 'proved' : 'node_limit';
+  const rr = yield* _pfValueGen(gs, pools, prices, chosenSel, vopts);
+  const optimality = (bb.proved && !rOpts.hit && !seedOpts.hit) ? 'proved' : 'node_limit';
+  prog.best = chosenSel.slice(); prog.value = rr.value; prog.cost = rr.cost;
+  prog.nodes = bb.nodes; prog.phase = 'done'; prog.proved = bb.proved;
   return {
     objective, coins, reserve, budget, universe: cands.length,
     chosen: chosenIds, cost: rr.cost, value: rr.value, dTokens: rr.dTokens, dScore: rr.dScore,
-    feasible: rr.cost <= budget, detail: detailFor(chosenIds),
-    optimality, proven: bb.proved, exact: false, nodes: bb.nodes
+    feasible: rr.cost <= budget, detail: wantDetail ? detailFor(chosenIds) : null,
+    optimality, proven: bb.proved, exact: false, nodes: bb.nodes,
+    budgetMs: totalBudgetMs || null, elapsedMs: totalBudgetMs ? (totalBudgetMs - left()) : null
   };
+}
+
+// Synchronous API: drain the generator in one go (used by tests + benchmarks).
+function portfolioPlan(galleries, players, opts) {
+  // The synchronous API must always TERMINATE, so its deadline ABORTS the search
+  // instead of pausing it (only `portfolioSearch` pauses, to be resumed).
+  opts = opts || {};
+  const totalBudgetMs = +opts.totalBudgetMs > 0 ? +opts.totalBudgetMs : 0;
+  const reserve = totalBudgetMs > 0 ? Math.max(150, totalBudgetMs * 0.1) : 0;
+  const ctl = { deadline: totalBudgetMs > 0 ? Date.now() + totalBudgetMs - reserve : Infinity, abortOnDeadline: true };
+  const gen = _portfolioPlanGen(galleries, players, opts, ctl);
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+// Cooperative API for the UI: advance the SAME generator in small time slices.
+// `step(msBudget)` works for at most `msBudget` and returns the live progress
+// (best plan so far), so the UI can render an intermediate immediately and keep
+// improving without ever blocking. When the budget is spent the search PAUSES
+// (the B&B stack, the incumbent and the memo stay intact); `extend(ms)` resumes
+// the SAME search where it stopped -- that is what "Improve further" uses.
+function portfolioSearch(galleries, players, opts) {
+  opts = opts || {};
+  const totalBudgetMs = +opts.totalBudgetMs > 0 ? +opts.totalBudgetMs : 0;
+  const reserve = totalBudgetMs > 0 ? Math.max(150, totalBudgetMs * 0.1) : 0;
+  const ctl = { deadline: totalBudgetMs > 0 ? Date.now() + totalBudgetMs - reserve : Infinity, abortOnDeadline: false };
+  const gen = _portfolioPlanGen(galleries, players, opts, ctl);
+  let done = false, plan = null, prog = null, paused = false;
+  const api = {
+    get done() { return done; },
+    get paused() { return paused; },
+    get progress() { return prog; },
+    get plan() { return plan; },
+    extend(ms) { ctl.deadline += Math.max(0, +ms || 0); paused = false; return api; },
+    step(msBudget) {
+      if (done) return { done: true, plan, progress: prog, paused: false };
+      if (paused) return { done: false, plan: null, progress: prog, paused: true };
+      const t0 = Date.now();
+      // Fine-grained yields carry `null`; only progress objects update `prog`.
+      let r = gen.next();
+      if (!r.done && r.value) { if (r.value.phase) prog = r.value; if (r.value.paused) paused = true; }
+      while (!r.done && !paused && Date.now() - t0 < msBudget) {
+        r = gen.next();
+        if (!r.done && r.value) { if (r.value.phase) prog = r.value; if (r.value.paused) paused = true; }
+      }
+      if (r.done) { done = true; plan = r.value; paused = false; }
+      return { done, plan, progress: prog, paused };
+    },
+  };
+  return api;
+}
+
+// Lazily compute the per-set detail rows for an ALREADY-chosen id list, without
+// re-running the search. The UI calls this only for the rows it needs to show,
+// so the first paint never pays for 127 `evalSet`s (P3 rework).
+function portfolioDetail(galleries, players, opts, chosenIds) {
+  opts = opts || {};
+  const w = portfolioWorld(galleries, players, opts);
+  const gs = w.gs, pools = w.pools, prices = w.prices, cands = w.cands;
+  const chosen = new Set(chosenIds || []);
+  return gs.map((g, i) => {
+    const universe = w.universes[i];
+    const ids = new Set(pools[i].map(x => x.itemId || x.id));
+    for (const id of chosen) if (prices.has(id) && prices.get(id).setIds.has(g.id)) ids.add(id);
+    const ev = evalSet(g, universe, ids);
+    const b = w.baseFor(i);
+    return { set: g.id, dScore: ev.score - b.score,
+      dTokens: tokens(g, ev.grade) - b.tokens, newGrade: ev.grade };
+  });
 }
 // Alias kept so existing imports/tests that referenced EXACT_PORTFOLIO_LIMIT
 // still resolve (the portfolio now also runs a global B&B beyond that limit).
@@ -946,4 +1777,4 @@ function plan(galleries, players, opts) {
   return { plans: ranked, all: p, portfolio };
 }
 // ===== ENGINE END =====
-if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, priceOf, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };
+if (typeof module !== 'undefined' && module.exports) module.exports = { G, TAG, DEFAULT_COUNT_TOP_TAGS, pct, bonus, sanScore, priceOf, score, lineup, grade, tokens, loss, eligible, norm, evalG, summary, poolFor, candidatesFor, evalSet, evalMemoReset, searchStats, searchStatsReset, gain1, objectiveValue, improve2opt, spendTotal, planSet, plan, setUpperBound, bbUpperBound, bbValue, branchAndBound, portfolioWorld, portfolioPlan, portfolioSearch, portfolioDetail, portfolioValue, portfolioBrute, portfolioUpperBound, portfolioBranchAndBound, portfolioImprove2opt, portfolioGreedySeed, EXACT_PORTFOLIO_LIMIT };

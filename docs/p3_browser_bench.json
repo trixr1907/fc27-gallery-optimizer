@@ -1,0 +1,40 @@
+{
+  "errors": [],
+  "players": 3000,
+  "galleries": 127,
+  "render_ms": 35.400000002235174,
+  "dom_player_rows": 30,
+  "dom_total_players": 3000,
+  "summary_total_ms": 2017.699999999255,
+  "first_calc_ms": 2425.699999999255,
+  "search_max_tick_ms": 22.100000001490116,
+  "search_first_plan_ms": 122.5,
+  "search_steps": 118,
+  "search_paused": true,
+  "first_calc_optimality": "node_limit",
+  "first_calc_chosen": 1,
+  "objective_change_ms": 2360.5,
+  "objective_change_max_tick_ms": 22.800000000745058,
+  "improve_ms": 3526.7000000029802,
+  "improve_max_tick_ms": 25.699999999254942,
+  "improve_resumed": true,
+  "subseq_ms": 1.199999999254942,
+  "dom_player_rows_filtered": 30,
+  "portfolio_len": 62,
+  "max_block_ms": 35.400000002235174,
+  "targets": {
+    "first_calc_ms": 3000,
+    "subseq_ms": 100,
+    "objective_change_ms": 3000,
+    "first_calc_met": true,
+    "subseq_met": true,
+    "objective_change_met": true,
+    "dom_rows_bounded": true
+  },
+  "ok": true,
+  "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "dataset": {
+    "sets": 127,
+    "cards": 3000
+  }
+}

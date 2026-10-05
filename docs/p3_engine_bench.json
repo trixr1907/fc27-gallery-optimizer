@@ -1,0 +1,40 @@
+{
+  "dataset": {
+    "sets": 127,
+    "cards": 3000
+  },
+  "timeout_s": 60.0,
+  "first_calc": {
+    "ms": 2632.6,
+    "timed_out": false,
+    "budget_ms": 2500,
+    "optimality": "node_limit",
+    "universe": 2400,
+    "chosen": 1
+  },
+  "objective_change": {
+    "ms": 2397.6,
+    "timed_out": false
+  },
+  "small_replan": {
+    "ms": 550.7,
+    "timed_out": false,
+    "budget_ms": 600
+  },
+  "cooperative": {
+    "steps": 267,
+    "max_step_ms": 34,
+    "first_plan_ms": 30,
+    "total_ms": 8318,
+    "pauses": 1,
+    "done": false,
+    "timed_out": false
+  },
+  "targets": {
+    "first_calc_ms": 3000.0,
+    "subseq_ms": 100.0,
+    "first_calc_met": true,
+    "subseq_measured_by": "tools/bench_browser.py"
+  },
+  "node": "v22.22.2"
+}
