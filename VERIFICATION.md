@@ -1023,42 +1023,9 @@ interruptible, and 4,340 ms for the render before it was virtualised.
 | **time to a first plan** | **30 ms** |
 | steps / pauses | 267 / 1 (resumed once) |
 
-Both first-calculation figures agree (engine 2,431 ms / browser 2,378 ms), which
-is expected: the browser is timing the same bounded engine call.
-
-**The initial render (UI freeze) — fixed in P3.** The review correctly refused to
-exclude the ~4.3 s initial render. It was measured per part and fixed:
-
-- the **player table was virtualised**: only a ~30-row window is in the DOM, with
-  spacer rows preserving the scroll height, inside a stable scroll container.
-  Rendering 3,000 rows built a ~3 MB HTML string and a huge DOM; it now costs
-  **~7 ms** and the DOM holds **30** rows instead of 3,000. The cheap follow-up
-  (search filter) dropped from 74.7 ms to **2.0 ms** as a result.
-- the **per-set summary** (`evalG`, one `lineup` per set) is the remaining ~2.1 s
-  of work; it is now computed **progressively in small batches** (~6 sets per
-  tick) and the stats/sets/closest panels fill in as results arrive. `render()`
-  itself is now **27.8 ms** and never blocks.
-- `norm()` is memoised (it ran ~760k `normalize('NFD')` + regex passes per
-  render); the set table reuses the progressive summary instead of re-evaluating
-  every set.
-
-**Responsiveness (measured, not assumed).** The main-thread block of each action
-is measured directly and reported as `max_block_ms`:
-
-| action | main-thread block |
-|---|---|
-| initial render | 27.8 ms |
-| cheap follow-up (filter) | 2.0 ms |
-| first calculation | 2,378 ms |
-| objective change | 2,321 ms |
-| "Improve further" (explicit) | 5,457 ms |
-| progressive summary, per tick | ~100 ms |
-
-The optimizer runs as **one bounded chunk**, so the worst automatic block is the
-bounded search (~2.4 s), not minutes. There is deliberately **no automatic
-background re-plan**: a bigger re-run is a bigger block, so further improvement is
-an explicit button with its own visible cost (5.5 s) — it is *not* claimed to be a
-sub-100 ms action. Only the cheap follow-up is under 100 ms.
+Both benchmarks time the SAME bounded engine call, so the first-calculation
+figures agree; the browser additionally reports the per-slice block, which is what
+the user actually feels.
 
 ### 9.6 Verdict against the P3 acceptance rule
 
@@ -1092,3 +1059,213 @@ sub-100 ms action. Only the cheap follow-up is under 100 ms.
   `tools/bench_browser.py`, `tests/test_lineup_incremental.py`,
   `tests/test_portfolio_budget.py`. **No new product dependency** — stdlib + the
   existing Node bridge.
+
+---
+
+## 10. P4 evidence — completion, CI, smoke tests and deploy status
+
+P4 closes the project: final documentation, repository hygiene, CI that adds **no
+runtime dependency**, and an end-to-end smoke test for **both** supported ways of
+running the app (`file://` and the local server). Every output below is a real
+run from this repository.
+
+### 10.1 One command that verifies everything — `tools/check_all.py`
+
+Added so a human and CI run the *same* thing. It runs the mirror check, the
+`node --check`, and the full suite, and prints a summary with real timings.
+
+```
+$ python tools/check_all.py
+
+=== fc27 verification ===
+  PASS engine mirror byte-identical (index.html -> engine/engine.js)    310.3 ms  exports line included in comparison: True
+  PASS engine parses (node --check)                                     169.0 ms
+  PASS test suite (unittest)                                         106086.0 ms  OK
+=========================
+RESULT: OK
+```
+
+If Node is not on `PATH`, step 2 is **SKIPPED with a warning** (never a red
+failure) and the suite skips the Node-backed modules — the same policy the test
+modules already use.
+
+### 10.2 CI without new runtime dependencies
+
+`.github/workflows/ci.yml` runs on every push/PR:
+
+| step | command |
+|---|---|
+| engine mirror byte-identical | `python tools/sync_engine.py --check` |
+| engine parses | `node --check engine/engine.js` |
+| the whole suite (incl. smoke) | `python -m unittest discover -s tests -q` |
+| smoke-test visibility | `python -m unittest tests.test_smoke_file tests.test_smoke_server tests.test_render_manifest -v` |
+
+**There is no `pip install` and no `npm install` anywhere in the workflow.** The
+product is one `index.html` plus a stdlib `server.py`; the suite is stdlib
+`unittest` driving the repository's own `tools/engine_cli.js` with Node. The only
+external pieces are GitHub's runner actions (`checkout` / `setup-python` /
+`setup-node`) and the browsers preinstalled on the runner image — none of which
+become dependencies of the shipped app. The last step exists so a **skipped**
+browser smoke test is visible in the log instead of being mistaken for a pass.
+
+### 10.3 Smoke test — `file://` (no server at all)
+
+`tests/test_smoke_file.py` loads a copy of the real `index.html` over `file://` in
+headless Chrome, drives the app's own entry points, and asserts the app boots,
+renders, virtualises the table and runs the cooperative optimizer.
+
+```
+$ python -m unittest tests.test_smoke_file -v
+test_app_boots_and_runs_from_disk ... ok
+test_cooperative_optimizer_runs_without_a_server ... ok
+test_engine_is_correct_in_the_browser ... ok
+test_file_protocol_limitation_is_documented ... ok
+test_per_set_plan_runs_without_a_server ... ok
+test_table_is_virtualised ... ok
+
+Ran 6 tests in 24.574s
+
+OK
+```
+
+**The agreed `file://` limitation is explicit and asserted:** the FUT.GG importer
+is a server route (`GET /api/futgg`), so it cannot work from disk (no origin, plus
+CORS). Everything else — rendering, the virtualised collection table, per-set
+plans, the global portfolio search — works fully offline. The test fails if that
+limitation stops being documented in `README.md`.
+
+### 10.4 Smoke test — the local server (real HTTP)
+
+`test_server_hardening.py` exercises handler methods against fakes; it never
+opens a socket. `tests/test_smoke_server.py` closes that gap: it starts the
+**actual `server.py` process** on a free port and speaks real HTTP to it.
+
+```
+$ python -m unittest tests.test_smoke_server -v
+test_directory_listing_is_refused ... ok
+test_dot_files_and_dot_directories_are_not_served ... ok
+test_dotfile_guard_does_not_break_the_app ... ok
+test_health_endpoint ... ok
+test_importer_disabled_by_env ... ok
+test_importer_rejects_disallowed_url_before_any_fetch ... ok
+test_index_html_is_served_directly ... ok
+test_path_traversal_is_refused ... ok
+test_root_serves_the_real_app ... ok
+test_security_headers_present ... ok
+test_static_engine_asset_is_served ... ok
+test_unknown_api_path_is_not_the_importer ... ok
+
+Ran 12 tests in 0.627s
+
+OK
+```
+
+It proves the whole path works end to end: `/api/health` answers with the schema
+version and `Cache-Control: no-store`; `/` serves the **real** app (the served
+HTML contains `id="portfolio"`, `id="playersScroll"`, the inline engine and the
+`ENGINE START` marker); `/engine/engine.js` is served as JavaScript; the
+hardening headers (`nosniff`, `DENY`) are on every response; and
+`FC27_NO_IMPORT=1` disables the importer with 503. No network is touched.
+
+**Status codes — exactly what the server answers** (this is the reconciliation of
+the `/.git/config` expectation):
+
+| request | status | why |
+|---|---|---|
+| `/.git/config`, `/.git/HEAD`, `/.gitignore`, `/.github/**`, `/.workbuddy-ai/**` | **404** | dot-segment guard (see the fix below) |
+| `/engine/` , `/tests/` , `/docs/` (directory) | **403** | directory listing disabled (P2.11) |
+| `/../server.py`, `/engine/../../server.py` | **404** | `..` is a dot-segment → same guard |
+| `/..%2fserver.py` (encoded) | **400/403** | reaches the containment guard |
+| `/`, `/index.html`, `/engine/engine.js` | **200** | the app itself |
+| `/api/futgg` with `FC27_NO_IMPORT=1` | **503** | importer kill-switch |
+
+**Defect found and fixed in P4: dot-files were served.** The original
+self-check expected `404` for `/.git/config`; the smoke run showed the server
+answered **200** — it returned the real `.git/config`, and `/.git/HEAD` with it,
+i.e. the repository config and object database were reachable over HTTP.
+`safe_static_path` only blocked escapes and absolute paths, not dot-segments.
+Any path segment starting with `.` is now refused with **404** (not 403, so the
+response does not even confirm the path exists); `..` is a dot-segment, so
+traversal is refused by the same rule. The guard is narrow — `/`, `/index.html`
+and `/engine/engine.js` still return 200 — and is pinned by
+`test_dot_files_and_dot_directories_are_not_served` and
+`test_dotfile_guard_does_not_break_the_app`.
+
+### 10.5 Render deploy — **NOT verified**
+
+`render.yaml` is present and the service is deploy-ready, but **no deploy was
+performed**: there is no Render account or CLI in this environment. It is
+therefore reported as a **deploy-ready manifest**, not as a tested deployment.
+
+What **is** verified locally (`tests/test_render_manifest.py`):
+
+```
+$ python -m unittest tests.test_render_manifest -v
+test_binds_and_serves_with_only_port_set ... ok
+test_build_command_is_a_no_op ... ok
+test_manifest_exists_and_is_a_web_service ... ok
+test_readme_states_the_deploy_was_not_verified ... ok
+test_start_command_is_the_supported_one ... ok
+test_verification_md_states_the_deploy_was_not_verified ... ok
+
+Ran 6 tests in 2.380s
+
+OK
+```
+
+
+- the Blueprint is structurally valid (`type: web`, `runtime: python`, an explicit
+  no-op build command) — checked without PyYAML, because adding a dependency just
+  to read a 6-line manifest would violate the no-new-dependency rule;
+- the declared start command is exactly `python3 server.py --no-open`, and
+  `server.py` really supports it (`--no-open`, `PORT`, and the
+  `0.0.0.0` bind when `PORT` is set);
+- the start command **actually binds and serves** when run with only `PORT` set
+  and `HOST` unset — the environment contract Render provides.
+
+What is **not** verified: that render.com builds the service, assigns a domain and
+routes to it. That disclaimer is asserted by the tests in both `README.md` and
+this file, so it cannot be quietly dropped.
+
+### 10.6 Repository hygiene
+
+- `.gitignore` covers the local scratch that earlier phases produced (browser
+  probes, screenshots, server logs) and the P3/P4 benchmark outputs, so a run
+  cannot accidentally commit a multi-hundred-KB JSON dump.
+- The committed evidence is the **curated** set under `docs/`
+  (`p3_engine_bench.json`, `p3_engine_split.json`, `p3_browser_bench.json`,
+  `p1_optimizer*.png`) — not raw scratch.
+- No secrets, no generated bundles, no vendored third-party code: the repository
+  is `index.html` + `server.py` + `engine/engine.js` (a mirror) + stdlib tools and
+  tests.
+- The stale phase task list was reconciled; P0–P3 tasks are marked completed.
+- **`CHANGELOG.md` was missing from the delivery list and is now added.** It
+  records every delivered phase commit by short hash (`a925878`, `b5db154`,
+  `36fa5fb`, `cfe0f6f`, `cb8beef`, `1388934`, `c39f7f3`) so it is traceable back
+  to the repository rather than being prose.
+- **`LICENSE` is deliberately absent — this is a stated position, not an
+  oversight.** Choosing a license is the repository owner's legal decision, and
+  the original baseline (`a925878`) carried no license grant either. Until one is
+  chosen the default applies: **all rights reserved**. The reason is documented
+  in `README.md` ("License") and at the end of `CHANGELOG.md`, and
+  `tests/test_repo_hygiene.py` fails if a `LICENSE` appears without that reason
+  being updated, or if the documentation disappears.
+
+### 10.7 Final state
+
+- `python -m unittest discover -s tests -q` → **Ran 368 tests in 112.097s** — `OK`
+  (335 at P3-accept → 357 in the first P4 hand-back → **368** after the two DoD
+  reconciliations: +3 dot-file tests, +8 `tests/test_repo_hygiene.py`, and the
+  P2.6 traversal test split into a refused-traversal test plus a dot-file test).
+- `python tools/check_all.py` → `PASS / PASS / PASS` — `RESULT: OK`.
+
+### 10.8 DoD reconciliation (the two closing items)
+
+| item | resolution |
+|---|---|
+| `/.git/config` — self-check expected **404**, smoke report said **403** | The real answer was neither: it was **200** (the repository config and `/.git/HEAD` were served). Fixed in `server.py`: any dot-segment is now refused with **404**. Test and documented expectation now both say **404**; the traversal case (also a dot-segment) is **404** as well, and the directory case stays **403**. |
+| Delivery list names `LICENSE` and `CHANGELOG.md`; the P4 hand-back did not | `CHANGELOG.md` was **absent and is now added** (records every phase commit by hash). `LICENSE` was **absent and stays absent deliberately** — a license is the owner's legal decision; the reason is documented in `README.md` and `CHANGELOG.md` and pinned by `tests/test_repo_hygiene.py`. |
+- Engine mirror: `tools/sync_engine.py --check` → byte-identical.
+- Both the inline script and `engine/engine.js` pass `node --check`.
+- **No new runtime dependency** at any point: stdlib Python + Node (already used
+  for the engine bridge) + headless Chrome (optional, smoke only).

@@ -921,6 +921,13 @@ class Handler(SimpleHTTPRequestHandler):
         if u.path == '/api/health':
             self._json(200, {'ok': True, 'schemaVersion': SCHEMA_VERSION})
             return
+        # P4: never serve a DOT-file or a DOT-directory. `.git` above all: it
+        # holds the whole object database and the repo config, so serving it
+        # leaks the entire source history. 404 -- not 403 -- so the response does
+        # not even confirm that the path exists.
+        if any(seg.startswith('.') for seg in u.path.split('/') if seg):
+            self.send_error(404, 'Not found')
+            return
         # P2.11: never list a directory -- only a concrete file is served.
         if u.path != '/' and is_directory_request(u.path):
             self.send_error(403, 'Directory listing disabled')

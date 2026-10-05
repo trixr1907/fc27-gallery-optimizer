@@ -2,6 +2,7 @@ __pycache__/
 .DS_Store
 *.pyc
 .workbuddy-ai/
+
 # local dev scratch (browser probes, server logs)
 _app_check.js
 _baseline.html
@@ -10,3 +11,18 @@ _mk_shot.js
 _probe.jsonl
 _srv.log
 _srv.log.*
+
+# benchmark / probe scratch. The CURATED evidence is committed under docs/
+# (docs/p3_*.json); everything below is throwaway output from a local run.
+_bench_*.json
+_bench_*.log
+_fb.json
+_tick*.js
+_gen*.js
+_phases.js
+_stepmachine.js
+_step.py
+_ds.json
+_gen_ds.py
+_head.html
+_engine_backup.js

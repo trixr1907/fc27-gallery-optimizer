@@ -121,10 +121,29 @@ class TestHttpHardening(unittest.TestCase):
         body = json.loads(h.wfile.getvalue().decode())
         self.assertEqual(body["error"], "url_not_allowed")
 
-    def test_traversal_static_is_403(self):
-        h = self._handler("/../../etc/passwd")
-        h.do_GET()
-        self.assertEqual(self.status, 403)
+    def test_traversal_static_is_refused(self):
+        """Traversal must never be served.
+
+        P4 tightened this: `..` is a DOT-segment, so the new dot-segment guard
+        answers **404** (deliberately -- the response must not confirm that the
+        target exists). The containment guard's 403 remains reachable for the
+        encoded variants, so both codes are accepted here.
+        """
+        for path in ("/../../etc/passwd", "/..%2fetc/passwd"):
+            self.setUp()
+            h = self._handler(path)
+            h.do_GET()
+            self.assertIn(self.status, (400, 403, 404),
+                          "%s must not be served" % path)
+
+    def test_dotfile_static_is_404(self):
+        """`/.git/config` must be 404 -- it exposes the repository config and,
+        with `/.git/`, the whole object database (regression: was 200)."""
+        for path in ("/.git/config", "/.git/HEAD", "/.gitignore"):
+            self.setUp()
+            h = self._handler(path)
+            h.do_GET()
+            self.assertEqual(self.status, 404, "%s must not be served" % path)
 
     def test_health_ok(self):
         h = self._handler("/api/health")

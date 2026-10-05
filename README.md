@@ -14,7 +14,34 @@ python3 server.py
 
 Then open `http://127.0.0.1:8765`.
 
-You can also open `index.html` directly. Everything except the experimental FUT.GG URL importer works without the local server.
+### Open it without a server (`file://`)
+
+You can also open `index.html` directly from disk (a `file://` URL) — no server, no
+install. The whole optimizer works this way: rendering, the collection table, the
+per-set plans and the global portfolio search.
+
+**The one thing that cannot work from disk is the FUT.GG URL importer**, because it
+is a server route (`GET /api/futgg`): a `file://` page has no origin to call it on,
+and the browser would additionally be blocked by CORS. Everything else is fully
+offline. If you want the importer, run the local server (above) and use
+`http://127.0.0.1:8765`.
+
+## Verify it yourself
+
+One command runs everything CI runs:
+
+```bash
+python tools/check_all.py
+```
+
+It checks that the engine mirror (`engine/engine.js`) is byte-identical to the
+inline block in `index.html`, that both parse, and that the whole test suite
+passes — including the smoke tests that boot the app over `file://` and start the
+real `server.py` on a free port. It needs only **Python 3 (stdlib)** and **Node**;
+there is no `pip install` and no `npm install` anywhere, in CI or locally.
+
+CI (`.github/workflows/ci.yml`) runs the same commands on every push and pull
+request.
 
 ## What the optimizer does
 
@@ -172,6 +199,15 @@ The UI accordingly labels this value **"Bonus over lineup items"**. This
 assumption is tracked as an open item in `AUDIT.md` and must be re-checked
 against the live site in the doc phase.
 
+## License
+
+**No `LICENSE` file is included, deliberately.** Picking a license is the
+repository owner's legal decision, and the original code carried no license
+grant either. Until one is chosen, the default applies: **all rights reserved** —
+no permission is granted to copy, modify or redistribute this code. See the
+"License" section at the end of `CHANGELOG.md` for the same statement in the
+project history.
+
 ## Deploy on Render
 
 This repository is deploy-ready for Render as a Python Web Service.
@@ -182,3 +218,12 @@ This repository is deploy-ready for Render as a Python Web Service.
 - The server automatically binds to `0.0.0.0:$PORT` when Render supplies `PORT`.
 
 A `render.yaml` Blueprint is included.
+
+> **Status: not verified on Render.** No deploy has been performed — there is no
+> Render account or CLI in the development environment, so this is a
+> **deploy-ready manifest**, not a tested deployment. What *is* verified locally
+> (`tests/test_render_manifest.py`): the Blueprint is structurally valid, and the
+> declared start command actually binds and serves when run with only `PORT` set
+> and `HOST` unset — the same environment contract Render provides. What is
+> **not** verified: that render.com builds the service, assigns a domain and
+> routes to it.

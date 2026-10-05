@@ -1,0 +1,50 @@
+name: CI
+
+# Everything the project needs to be considered healthy, on a clean machine.
+#
+# NO NEW RUNTIME DEPENDENCIES: there is no `pip install` and no `npm install`
+# anywhere in this workflow. The product is a single `index.html` plus a stdlib
+# `server.py`; the test suite is stdlib `unittest` and drives the engine through
+# the repository's own `tools/engine_cli.js` with Node. The only external things
+# used here are GitHub's own runner actions (checkout / setup-python /
+# setup-node) and the browsers preinstalled on the runner image -- none of which
+# become dependencies of the shipped app.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: verify (python 3.13 / node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # 1. The engine mirror must stay byte-identical to the inline block.
+      - name: Engine mirror is byte-identical (index.html -> engine/engine.js)
+        run: python tools/sync_engine.py --check
+
+      # 2. Both copies must parse.
+      - name: Engine parses (node --check)
+        run: node --check engine/engine.js
+
+      # 3. The whole suite, including the smoke tests. The browser-backed smoke
+      #    tests SKIP (never fail) when no Chrome is found.
+      - name: Test suite
+        run: python -m unittest discover -s tests -q
+
+      # 4. Show which optional smoke tests actually ran, so a skip is visible
+      #    in the log instead of being mistaken for a pass.
+      - name: Smoke test visibility
+        run: python -m unittest tests.test_smoke_file tests.test_smoke_server tests.test_render_manifest -v
