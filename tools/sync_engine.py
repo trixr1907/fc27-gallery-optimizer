@@ -36,7 +36,10 @@ def extract_block(html_text):
         raise SystemExit("ERROR: no line after ENGINE END marker")
     second = html_text.find("\n", nl + 1)
     line_end = second if second >= 0 else len(html_text)
-    return html_text[i:line_end]
+    block = html_text[i:line_end]
+    if block.endswith("\r"):
+        block = block[:-1]
+    return block
 
 
 def main():
